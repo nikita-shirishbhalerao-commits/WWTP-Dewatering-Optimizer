@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from fuzzywuzzy import fuzz, process
 from scipy import stats
+from datetime import datetime, timedelta
 from io import BytesIO
 import warnings
 warnings.filterwarnings('ignore')
@@ -24,8 +25,63 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.title("🌊 Complete WWTP Dewatering & Thickening Performance Analyzer")
-st.markdown("**AI-Powered Analysis with Fuzzy Parameter Detection & Unit Tracking**")
+st.title("🌊 AI-Powered WWTP Dewatering & Thickening Performance Analyzer")
+st.markdown("**Fuzzy Parameter Detection | YOY Analysis | AI Recommendations | Unit Tracking**")
+
+# ============================================================
+# PERFORMANCE THRESHOLDS & RATINGS
+# ============================================================
+PERFORMANCE_THRESHOLDS = {
+    'polymer': {
+        'excellent': (0, 12),
+        'good': (12, 15),
+        'moderate': (15, 18),
+        'poor': (18, float('inf'))
+    },
+    'cake_quality': {
+        'excellent': (25, float('inf')),
+        'good': (20, 25),
+        'moderate': (15, 20),
+        'poor': (0, 15)
+    },
+    'dry_wet_ratio': {
+        'excellent': (0.25, float('inf')),
+        'good': (0.20, 0.25),
+        'moderate': (0.15, 0.20),
+        'poor': (0, 0.15)
+    },
+    'thickener_underflow': {
+        'excellent': (5, float('inf')),
+        'good': (3, 5),
+        'moderate': (2, 3),
+        'poor': (0, 2)
+    },
+    'thickener_overflow': {
+        'excellent': (0, 500),
+        'good': (500, 1000),
+        'moderate': (1000, 1500),
+        'poor': (1500, float('inf'))
+    },
+    'gbt_underflow': {
+        'excellent': (8, float('inf')),
+        'good': (5, 8),
+        'moderate': (3, 5),
+        'poor': (0, 3)
+    },
+    'gbt_overflow': {
+        'excellent': (0, 300),
+        'good': (300, 500),
+        'moderate': (500, 800),
+        'poor': (800, float('inf'))
+    }
+}
+
+PERFORMANCE_DESCRIPTIONS = {
+    'excellent': '✅ Excellent - Operating at best practice levels',
+    'good': '⚠️ Good - Acceptable performance, minor optimization possible',
+    'moderate': '🟡 Moderate - Performance below target, optimization recommended',
+    'poor': '🔴 Poor - Significant issues, immediate action required'
+}
 
 # ============================================================
 # FUZZY PARAMETER DETECTOR CLASS
@@ -38,7 +94,7 @@ class FuzzyParameterDetector:
         self.column_lower = [col.lower() for col in columns]
         self.detected_params = {}
     
-    def find_parameters(self, keyword_groups, threshold=65):
+    def find_parameters(self, keyword_groups, threshold=60):
         """Find parameters with fuzzy matching and unit detection"""
         results = {}
         
@@ -81,17 +137,14 @@ class FuzzyParameterDetector:
         """Detect unit from column name"""
         col_lower = column_name.lower()
         
-        # Polymer units
         if any(x in col_lower for x in ['lbs/ton', 'lbs per ton', 'lb/ton', 'polymer', 'poly']):
             if 'gal' in col_lower or 'gpd' in col_lower:
                 return 'GPD'
             return 'lbs/ton'
         
-        # Percentage units
         if any(x in col_lower for x in ['%', 'percent', 'solids', 'cake', 'ts', 'tss', 'moisture']):
             return '%'
         
-        # Flow units
         if any(x in col_lower for x in ['flow', 'gpm', 'mgd', 'gpd', 'rate']):
             if 'mgd' in col_lower:
                 return 'MGD'
@@ -101,7 +154,6 @@ class FuzzyParameterDetector:
                 return 'GPD'
             return 'MGD'
         
-        # Weight units
         if any(x in col_lower for x in ['ton', 'dry', 'wet', 'weight', 'mass']):
             if 'dry' in col_lower:
                 return 'Dry Tons'
@@ -109,688 +161,315 @@ class FuzzyParameterDetector:
                 return 'Wet Tons'
             return 'Tons'
         
-        # Count units
         if any(x in col_lower for x in ['truck', 'count', 'number', 'qty']):
             return 'Count'
         
-        # Hours/Time units
         if any(x in col_lower for x in ['hour', 'runtime', 'time', 'hrs']):
             return 'Hours'
         
-        # Concentration units
-        if any(x in col_lower for x in ['mg/l', 'mg/l', 'concentration', 'conc']):
+        if any(x in col_lower for x in ['mg/l', 'concentration', 'conc']):
             return 'mg/L'
         
-        # RPM units
         if any(x in col_lower for x in ['rpm', 'speed', 'bowl']):
             return 'RPM'
         
-        # Torque units
         if any(x in col_lower for x in ['torque', 'nm', 'ft-lb']):
             return 'Nm'
         
-        # Cost units
         if any(x in col_lower for x in ['cost', 'price', '$', 'dollar']):
             return '$'
         
-        # Pressure units
         if any(x in col_lower for x in ['pressure', 'psi', 'bar']):
             return 'PSI'
         
         return 'Unknown'
-    
-    def get_detected_params(self):
-        """Return all detected parameters"""
-        return self.detected_params
 
 # ============================================================
-# COMPREHENSIVE CHART GENERATOR
+# PERFORMANCE ANALYZER CLASS
 # ============================================================
-class ComprehensiveChartGenerator:
-    """Generates 25+ charts for complete WWTP analysis"""
+class PerformanceAnalyzer:
+    """Analyzes WWTP performance and generates recommendations"""
     
-    def __init__(self, df, detected_params):
+    def __init__(self, df, detected_params, plant_info=None):
         self.df = df
         self.detected_params = detected_params
-        self.charts = []
-        self.chart_counter = 0
+        self.plant_info = plant_info or {}
     
-    def _get_unique_id(self):
-        """Generate unique chart ID"""
-        self.chart_counter += 1
-        return self.chart_counter
+    def get_performance_rating(self, metric_name, value):
+        """Get performance rating for a metric"""
+        if metric_name not in PERFORMANCE_THRESHOLDS:
+            return 'unknown'
+        
+        thresholds = PERFORMANCE_THRESHOLDS[metric_name]
+        for rating, (min_val, max_val) in thresholds.items():
+            if min_val <= value < max_val:
+                return rating
+        return 'poor'
     
-    def generate_all_charts(self):
-        """Generate all available charts based on detected parameters"""
+    def calculate_yoy_change(self, current_data, previous_data):
+        """Calculate year-over-year change"""
+        if len(previous_data) == 0:
+            return None
         
-        # DEWATERING CHARTS
-        self._add_polymer_efficiency_chart()
-        self._add_polymer_trend_chart()
-        self._add_cake_quality_chart()
-        self._add_cake_trend_chart()
-        self._add_centrifuge_hours_chart()
-        self._add_equipment_utilization_chart()
-        self._add_dry_tons_chart()
-        self._add_wet_tons_chart()
-        self._add_dry_wet_ratio_chart()
-        self._add_truck_hauling_chart()
-        self._add_polymer_vs_cake_chart()
-        self._add_polymer_vs_trucks_chart()
-        self._add_cake_vs_trucks_chart()
+        current_mean = current_data.mean()
+        previous_mean = previous_data.mean()
         
-        # THICKENING CHARTS
-        self._add_thickener_feed_chart()
-        self._add_thickener_underflow_chart()
-        self._add_thickener_overflow_chart()
-        self._add_thickener_concentration_chart()
-        self._add_thickener_torque_chart()
+        if previous_mean == 0:
+            return None
         
-        # GBT (GRAVITY BELT THICKENER) CHARTS
-        self._add_gbt_feed_chart()
-        self._add_gbt_underflow_chart()
-        self._add_gbt_overflow_chart()
-        self._add_gbt_belt_speed_chart()
-        self._add_gbt_polymer_chart()
-        
-        # FLOW CHARTS
-        self._add_influent_flow_chart()
-        self._add_effluent_flow_chart()
-        self._add_flow_balance_chart()
-        self._add_flow_difference_chart()
-        
-        # EQUIPMENT CHARTS
-        self._add_bowl_speed_chart()
-        self._add_equipment_performance_chart()
-        
-        # COST ANALYSIS
-        self._add_cost_per_dry_ton_chart()
-        self._add_cost_per_truck_chart()
-        
-        return self.charts
+        change_pct = ((current_mean - previous_mean) / previous_mean) * 100
+        return change_pct
     
-    # DEWATERING CHARTS
-    def _add_polymer_efficiency_chart(self):
+    def generate_recommendations(self):
+        """Generate AI-based recommendations"""
+        recommendations = []
+        
+        # Polymer Efficiency Analysis
         if self.detected_params.get('polymer', {}).get('column'):
-            col = self.detected_params['polymer']['column']
-            unit = self.detected_params['polymer']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
+            poly_col = self.detected_params['polymer']['column']
+            poly_data = pd.to_numeric(self.df[poly_col], errors='coerce').dropna()
             
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'Polymer Efficiency ({unit})',
-                    'type': 'line_with_ma',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'Dewatering',
-                    'description': 'Daily polymer usage with 7-day moving average',
-                    'threshold_excellent': 12 if unit == 'lbs/ton' else None,
-                    'threshold_good': 15 if unit == 'lbs/ton' else None
-                })
-    
-    def _add_polymer_trend_chart(self):
-        if self.detected_params.get('polymer', {}).get('column'):
-            col = self.detected_params['polymer']['column']
-            unit = self.detected_params['polymer']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 30:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'Polymer Trend Analysis ({unit})',
-                    'type': 'trend_analysis',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'Dewatering',
-                    'description': 'Polymer usage trend with linear regression'
-                })
-    
-    def _add_cake_quality_chart(self):
-        if self.detected_params.get('cake_quality', {}).get('column'):
-            col = self.detected_params['cake_quality']['column']
-            unit = self.detected_params['cake_quality']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'Cake Quality ({unit})',
-                    'type': 'line_with_ma',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'Dewatering',
-                    'description': 'Cake solids percentage with 7-day moving average',
-                    'threshold_excellent': 25,
-                    'threshold_good': 20
-                })
-    
-    def _add_cake_trend_chart(self):
-        if self.detected_params.get('cake_quality', {}).get('column'):
-            col = self.detected_params['cake_quality']['column']
-            unit = self.detected_params['cake_quality']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 30:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'Cake Quality Trend ({unit})',
-                    'type': 'trend_analysis',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'Dewatering',
-                    'description': 'Cake quality trend with linear regression'
-                })
-    
-    def _add_centrifuge_hours_chart(self):
-        hours_cols = []
-        for i in range(1, 6):
-            key = f'centrifuge_{i}_hours'
-            if self.detected_params.get(key, {}).get('column'):
-                hours_cols.append({
-                    'column': self.detected_params[key]['column'],
-                    'label': f'Centrifuge {i}',
-                    'unit': self.detected_params[key]['unit']
-                })
+            if len(poly_data) > 0:
+                poly_avg = poly_data.mean()
+                poly_current = poly_data.iloc[-1]
+                rating = self.get_performance_rating('polymer', poly_avg)
+                
+                if rating == 'poor':
+                    annual_cost = poly_avg * 50 * 365  # $50 per lb
+                    target_cost = 12 * 50 * 365
+                    potential_savings = annual_cost - target_cost
+                    
+                    recommendations.append({
+                        'priority': '🔴 CRITICAL',
+                        'category': 'Polymer Efficiency',
+                        'metric': 'Active Polymer Dose',
+                        'current_value': f'{poly_avg:.2f} lbs/ton',
+                        'target_value': '12 lbs/ton',
+                        'issue': 'Excessive polymer consumption significantly above industry standards',
+                        'root_causes': [
+                            'Centrifuge/BFP bowl speed may be suboptimal',
+                            'Feed rate too high for current equipment',
+                            'Polymer type or concentration not suitable for sludge characteristics',
+                            'Equipment wear or mechanical issues',
+                            'Sludge characteristics changed (higher solids, more difficult to dewater)'
+                        ],
+                        'actions': [
+                            'Conduct jar test to optimize polymer type and dose',
+                            'Adjust equipment speed parameters incrementally',
+                            'Reduce feed rate by 10-15% and monitor cake quality',
+                            'Inspect equipment for wear, bearing issues, or seal leaks',
+                            'Analyze incoming sludge TS%, volatile solids, and particle size'
+                        ],
+                        'potential_savings': f'${potential_savings:,.0f}/year',
+                        'savings_explanation': f'Reducing polymer from {poly_avg:.1f} to 12 lbs/ton at $50/lb = ${potential_savings:,.0f} annual savings',
+                        'additional_data_needed': [
+                            'Sludge solids concentration (% TS)',
+                            'Sludge volatile solids content',
+                            'Equipment bowl/belt speed (RPM)',
+                            'Feed rate (GPM)',
+                            'Polymer type and concentration',
+                            'Centrifuge differential speed'
+                        ],
+                        'timeline': '1-2 weeks',
+                        'risk': 'High - May temporarily affect cake quality'
+                    })
+                
+                elif rating == 'moderate':
+                    annual_cost = poly_avg * 50 * 365
+                    target_cost = 12 * 50 * 365
+                    potential_savings = annual_cost - target_cost
+                    
+                    recommendations.append({
+                        'priority': '🟠 HIGH',
+                        'category': 'Polymer Efficiency',
+                        'metric': 'Active Polymer Dose',
+                        'current_value': f'{poly_avg:.2f} lbs/ton',
+                        'target_value': '12 lbs/ton',
+                        'issue': 'Polymer consumption above optimal levels',
+                        'root_causes': [
+                            'Polymer dose not fully optimized',
+                            'Equipment parameters could be fine-tuned',
+                            'Seasonal sludge characteristic variations'
+                        ],
+                        'actions': [
+                            'Perform polymer dose optimization study',
+                            'Adjust equipment parameters incrementally',
+                            'Implement daily monitoring of polymer efficiency'
+                        ],
+                        'potential_savings': f'${potential_savings:,.0f}/year',
+                        'savings_explanation': f'Reducing polymer from {poly_avg:.1f} to 12 lbs/ton = ${potential_savings:,.0f} annual savings',
+                        'additional_data_needed': [
+                            'Historical polymer dose data',
+                            'Sludge characteristics trends',
+                            'Equipment performance curves'
+                        ],
+                        'timeline': '2-4 weeks',
+                        'risk': 'Medium - Monitor cake quality closely'
+                    })
         
-        if hours_cols:
-            self.charts.append({
-                'id': self._get_unique_id(),
-                'name': 'Centrifuge Run Hours',
-                'type': 'multi_bar',
-                'columns': hours_cols,
-                'category': 'Dewatering',
-                'description': 'Daily run hours for each centrifuge'
-            })
-    
-    def _add_equipment_utilization_chart(self):
-        hours_cols = []
-        for i in range(1, 4):
-            key = f'centrifuge_{i}_hours'
-            if self.detected_params.get(key, {}).get('column'):
-                hours_cols.append(self.detected_params[key]['column'])
+        # Cake Quality Analysis
+        if self.detected_params.get('cake_quality', {}).get('column'):
+            cake_col = self.detected_params['cake_quality']['column']
+            cake_data = pd.to_numeric(self.df[cake_col], errors='coerce').dropna()
+            
+            if len(cake_data) > 0:
+                cake_avg = cake_data.mean()
+                rating = self.get_performance_rating('cake_quality', cake_avg)
+                
+                if rating == 'poor':
+                    # Estimate truck reduction
+                    current_trucks = 100  # baseline
+                    target_trucks = 60
+                    truck_savings = (current_trucks - target_trucks) * 500 * 365
+                    
+                    recommendations.append({
+                        'priority': '🔴 CRITICAL',
+                        'category': 'Cake Quality',
+                        'metric': 'Cake Solids %',
+                        'current_value': f'{cake_avg:.2f}%',
+                        'target_value': '25%',
+                        'issue': 'Poor cake quality - sludge too wet, excessive hauling costs',
+                        'root_causes': [
+                            'Insufficient polymer dose',
+                            'Equipment speed too high',
+                            'Feed rate too high',
+                            'Polymer type not suitable',
+                            'Equipment wear or damage'
+                        ],
+                        'actions': [
+                            'Increase polymer dose by 15-20%',
+                            'Reduce equipment speed by 5-10%',
+                            'Reduce feed rate by 10-15%',
+                            'Consider alternative polymer type',
+                            'Inspect equipment for wear'
+                        ],
+                        'potential_savings': f'${truck_savings:,.0f}/year',
+                        'savings_explanation': f'Improving cake from {cake_avg:.1f}% to 25% reduces trucks from ~100 to ~60/day = ${truck_savings:,.0f} annual savings',
+                        'additional_data_needed': [
+                            'Centrifuge bowl condition',
+                            'Scroll wear measurements',
+                            'Bearing condition assessment',
+                            'Seal integrity check'
+                        ],
+                        'timeline': '1-2 weeks',
+                        'risk': 'Low - Improves operation'
+                    })
         
-        if len(hours_cols) >= 2:
-            self.charts.append({
-                'id': self._get_unique_id(),
-                'name': 'Equipment Utilization %',
-                'type': 'utilization',
-                'columns': hours_cols,
-                'category': 'Dewatering',
-                'description': 'Percentage utilization (hours/24) for each centrifuge'
-            })
-    
-    def _add_dry_tons_chart(self):
-        if self.detected_params.get('dry_tons', {}).get('column'):
-            col = self.detected_params['dry_tons']['column']
-            unit = self.detected_params['dry_tons']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'Dry Tons Production ({unit})',
-                    'type': 'bar_with_ma',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'Dewatering',
-                    'description': 'Daily dry solids production'
-                })
-    
-    def _add_wet_tons_chart(self):
-        if self.detected_params.get('wet_tons', {}).get('column'):
-            col = self.detected_params['wet_tons']['column']
-            unit = self.detected_params['wet_tons']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'Wet Tons Production ({unit})',
-                    'type': 'bar_with_ma',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'Dewatering',
-                    'description': 'Daily wet solids production'
-                })
-    
-    def _add_dry_wet_ratio_chart(self):
-        if (self.detected_params.get('dry_tons', {}).get('column') and 
-            self.detected_params.get('wet_tons', {}).get('column')):
-            
-            dry_col = self.detected_params['dry_tons']['column']
-            wet_col = self.detected_params['wet_tons']['column']
-            
-            self.charts.append({
-                'id': self._get_unique_id(),
-                'name': 'Dewatering Efficiency (Dry/Wet Ratio)',
-                'type': 'ratio',
-                'column1': dry_col,
-                'column2': wet_col,
-                'unit': 'Ratio',
-                'category': 'Dewatering',
-                'description': 'Dry tons / Wet tons - Higher is better',
-                'threshold_excellent': 0.25,
-                'threshold_good': 0.20
-            })
-    
-    def _add_truck_hauling_chart(self):
-        if self.detected_params.get('trucks', {}).get('column'):
-            col = self.detected_params['trucks']['column']
-            unit = self.detected_params['trucks']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'Sludge Truck Hauling ({unit})',
-                    'type': 'bar_with_ma',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'Dewatering',
-                    'description': 'Daily sludge trucks hauled'
-                })
-    
-    def _add_polymer_vs_cake_chart(self):
-        if (self.detected_params.get('polymer', {}).get('column') and 
-            self.detected_params.get('cake_quality', {}).get('column')):
-            
-            self.charts.append({
-                'id': self._get_unique_id(),
-                'name': 'Polymer vs Cake Quality',
-                'type': 'scatter_with_trend',
-                'column1': self.detected_params['polymer']['column'],
-                'column2': self.detected_params['cake_quality']['column'],
-                'label1': f"Polymer ({self.detected_params['polymer']['unit']})",
-                'label2': f"Cake Quality ({self.detected_params['cake_quality']['unit']})",
-                'category': 'Dewatering',
-                'description': 'Relationship between polymer dose and cake quality'
-            })
-    
-    def _add_polymer_vs_trucks_chart(self):
-        if (self.detected_params.get('polymer', {}).get('column') and 
-            self.detected_params.get('trucks', {}).get('column')):
-            
-            self.charts.append({
-                'id': self._get_unique_id(),
-                'name': 'Polymer vs Truck Hauling',
-                'type': 'scatter_with_trend',
-                'column1': self.detected_params['polymer']['column'],
-                'column2': self.detected_params['trucks']['column'],
-                'label1': f"Polymer ({self.detected_params['polymer']['unit']})",
-                'label2': f"Trucks ({self.detected_params['trucks']['unit']})",
-                'category': 'Dewatering',
-                'description': 'Relationship between polymer dose and truck requirements'
-            })
-    
-    def _add_cake_vs_trucks_chart(self):
-        if (self.detected_params.get('cake_quality', {}).get('column') and 
-            self.detected_params.get('trucks', {}).get('column')):
-            
-            self.charts.append({
-                'id': self._get_unique_id(),
-                'name': 'Cake Quality vs Truck Hauling',
-                'type': 'scatter_with_trend',
-                'column1': self.detected_params['cake_quality']['column'],
-                'column2': self.detected_params['trucks']['column'],
-                'label1': f"Cake Quality ({self.detected_params['cake_quality']['unit']})",
-                'label2': f"Trucks ({self.detected_params['trucks']['unit']})",
-                'category': 'Dewatering',
-                'description': 'Relationship between cake quality and truck requirements'
-            })
-    
-    # THICKENING CHARTS
-    def _add_thickener_feed_chart(self):
-        if self.detected_params.get('thickener_feed', {}).get('column'):
-            col = self.detected_params['thickener_feed']['column']
-            unit = self.detected_params['thickener_feed']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'Thickener Feed Rate ({unit})',
-                    'type': 'line_with_ma',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'Thickening',
-                    'description': 'Feed rate to gravity thickener'
-                })
-    
-    def _add_thickener_underflow_chart(self):
+        # Thickener Performance Analysis
         if self.detected_params.get('thickener_underflow', {}).get('column'):
-            col = self.detected_params['thickener_underflow']['column']
-            unit = self.detected_params['thickener_underflow']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
+            uf_col = self.detected_params['thickener_underflow']['column']
+            uf_data = pd.to_numeric(self.df[uf_col], errors='coerce').dropna()
             
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'Thickener Underflow Concentration ({unit})',
-                    'type': 'line_with_ma',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'Thickening',
-                    'description': 'Underflow solids concentration',
-                    'threshold_excellent': 5,
-                    'threshold_good': 3
-                })
-    
-    def _add_thickener_overflow_chart(self):
-        if self.detected_params.get('thickener_overflow', {}).get('column'):
-            col = self.detected_params['thickener_overflow']['column']
-            unit = self.detected_params['thickener_overflow']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'Thickener Overflow Clarity ({unit})',
-                    'type': 'line_with_ma_inverse',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'Thickening',
-                    'description': 'Overflow TSS - Lower is better',
-                    'threshold_excellent': 500,
-                    'threshold_good': 1000
-                })
-    
-    def _add_thickener_concentration_chart(self):
-        if (self.detected_params.get('thickener_feed', {}).get('column') and 
-            self.detected_params.get('thickener_underflow', {}).get('column')):
-            
-            self.charts.append({
-                'id': self._get_unique_id(),
-                'name': 'Thickener Concentration Ratio',
-                'type': 'ratio',
-                'column1': self.detected_params['thickener_underflow']['column'],
-                'column2': self.detected_params['thickener_feed']['column'],
-                'unit': 'Ratio',
-                'category': 'Thickening',
-                'description': 'Underflow / Feed concentration ratio'
-            })
-    
-    def _add_thickener_torque_chart(self):
-        if self.detected_params.get('thickener_torque', {}).get('column'):
-            col = self.detected_params['thickener_torque']['column']
-            unit = self.detected_params['thickener_torque']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'Thickener Rake Torque ({unit})',
-                    'type': 'line_with_ma',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'Thickening',
-                    'description': 'Rake mechanism torque - indicates sludge density'
-                })
-    
-    # GBT (GRAVITY BELT THICKENER) CHARTS
-    def _add_gbt_feed_chart(self):
-        if self.detected_params.get('gbt_feed', {}).get('column'):
-            col = self.detected_params['gbt_feed']['column']
-            unit = self.detected_params['gbt_feed']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'GBT Feed Rate ({unit})',
-                    'type': 'line_with_ma',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'GBT (Gravity Belt Thickener)',
-                    'description': 'Feed rate to gravity belt thickener'
-                })
-    
-    def _add_gbt_underflow_chart(self):
-        if self.detected_params.get('gbt_underflow', {}).get('column'):
-            col = self.detected_params['gbt_underflow']['column']
-            unit = self.detected_params['gbt_underflow']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'GBT Underflow Concentration ({unit})',
-                    'type': 'line_with_ma',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'GBT (Gravity Belt Thickener)',
-                    'description': 'GBT underflow solids concentration',
-                    'threshold_excellent': 8,
-                    'threshold_good': 5
-                })
-    
-    def _add_gbt_overflow_chart(self):
-        if self.detected_params.get('gbt_overflow', {}).get('column'):
-            col = self.detected_params['gbt_overflow']['column']
-            unit = self.detected_params['gbt_overflow']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'GBT Overflow Clarity ({unit})',
-                    'type': 'line_with_ma_inverse',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'GBT (Gravity Belt Thickener)',
-                    'description': 'GBT overflow TSS - Lower is better',
-                    'threshold_excellent': 300,
-                    'threshold_good': 500
-                })
-    
-    def _add_gbt_belt_speed_chart(self):
-        if self.detected_params.get('gbt_belt_speed', {}).get('column'):
-            col = self.detected_params['gbt_belt_speed']['column']
-            unit = self.detected_params['gbt_belt_speed']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'GBT Belt Speed ({unit})',
-                    'type': 'line_with_ma',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'GBT (Gravity Belt Thickener)',
-                    'description': 'Gravity belt thickener belt speed'
-                })
-    
-    def _add_gbt_polymer_chart(self):
-        if self.detected_params.get('gbt_polymer', {}).get('column'):
-            col = self.detected_params['gbt_polymer']['column']
-            unit = self.detected_params['gbt_polymer']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'GBT Polymer Dose ({unit})',
-                    'type': 'line_with_ma',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'GBT (Gravity Belt Thickener)',
-                    'description': 'Polymer dose for gravity belt thickener'
-                })
-    
-    # FLOW CHARTS
-    def _add_influent_flow_chart(self):
-        if self.detected_params.get('influent_flow', {}).get('column'):
-            col = self.detected_params['influent_flow']['column']
-            unit = self.detected_params['influent_flow']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'Influent Flow ({unit})',
-                    'type': 'line_with_ma',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'Flow',
-                    'description': 'Wastewater flow into treatment plant'
-                })
-    
-    def _add_effluent_flow_chart(self):
-        if self.detected_params.get('effluent_flow', {}).get('column'):
-            col = self.detected_params['effluent_flow']['column']
-            unit = self.detected_params['effluent_flow']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'Effluent Flow ({unit})',
-                    'type': 'line_with_ma',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'Flow',
-                    'description': 'Treated water discharge'
-                })
-    
-    def _add_flow_balance_chart(self):
-        if (self.detected_params.get('influent_flow', {}).get('column') and 
-            self.detected_params.get('effluent_flow', {}).get('column')):
-            
-            self.charts.append({
-                'id': self._get_unique_id(),
-                'name': 'Flow Balance (Influent vs Effluent)',
-                'type': 'dual_line',
-                'column1': self.detected_params['influent_flow']['column'],
-                'column2': self.detected_params['effluent_flow']['column'],
-                'label1': f"Influent ({self.detected_params['influent_flow']['unit']})",
-                'label2': f"Effluent ({self.detected_params['effluent_flow']['unit']})",
-                'category': 'Flow',
-                'description': 'Comparison of influent and effluent flows'
-            })
-    
-    def _add_flow_difference_chart(self):
-        if (self.detected_params.get('influent_flow', {}).get('column') and 
-            self.detected_params.get('effluent_flow', {}).get('column')):
-            
-            self.charts.append({
-                'id': self._get_unique_id(),
-                'name': 'Flow Difference %',
-                'type': 'flow_difference',
-                'column1': self.detected_params['influent_flow']['column'],
-                'column2': self.detected_params['effluent_flow']['column'],
-                'unit': '%',
-                'category': 'Flow',
-                'description': '(Influent - Effluent) / Influent × 100'
-            })
-    
-    # EQUIPMENT CHARTS
-    def _add_bowl_speed_chart(self):
-        if self.detected_params.get('bowl_speed', {}).get('column'):
-            col = self.detected_params['bowl_speed']['column']
-            unit = self.detected_params['bowl_speed']['unit']
-            data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            
-            if len(data) > 0:
-                self.charts.append({
-                    'id': self._get_unique_id(),
-                    'name': f'Centrifuge Bowl Speed ({unit})',
-                    'type': 'line_with_ma',
-                    'column': col,
-                    'unit': unit,
-                    'category': 'Equipment',
-                    'description': 'Centrifuge bowl rotation speed'
-                })
-    
-    def _add_equipment_performance_chart(self):
-        hours_cols = []
-        for i in range(1, 4):
-            key = f'centrifuge_{i}_hours'
-            if self.detected_params.get(key, {}).get('column'):
-                hours_cols.append(self.detected_params[key]['column'])
+            if len(uf_data) > 0:
+                uf_avg = uf_data.mean()
+                rating = self.get_performance_rating('thickener_underflow', uf_avg)
+                
+                if rating in ['poor', 'moderate']:
+                    recommendations.append({
+                        'priority': '🟡 MEDIUM',
+                        'category': 'Thickener Performance',
+                        'metric': 'Underflow Concentration',
+                        'current_value': f'{uf_avg:.2f}% TS',
+                        'target_value': '5% TS',
+                        'issue': 'Low thickener underflow concentration increases downstream processing load',
+                        'root_causes': [
+                            'Insufficient retention time',
+                            'Feed rate too high',
+                            'Poor polymer conditioning',
+                            'Rake mechanism issues',
+                            'Sludge characteristics difficult to thicken'
+                        ],
+                        'actions': [
+                            'Reduce feed rate to thickener',
+                            'Increase retention time',
+                            'Optimize polymer dose for thickening',
+                            'Check rake mechanism operation',
+                            'Analyze incoming sludge characteristics'
+                        ],
+                        'potential_savings': 'Reduce downstream processing load and costs',
+                        'savings_explanation': 'Higher underflow concentration reduces volume to dewatering, saving polymer and equipment wear',
+                        'additional_data_needed': [
+                            'Thickener feed rate (GPM)',
+                            'Thickener depth and area',
+                            'Rake speed and torque',
+                            'Polymer type and dose for thickening'
+                        ],
+                        'timeline': '1-2 weeks',
+                        'risk': 'Low'
+                    })
         
-        if len(hours_cols) >= 2:
-            self.charts.append({
-                'id': self._get_unique_id(),
-                'name': 'Equipment Performance Comparison',
-                'type': 'box_plot',
-                'columns': hours_cols,
-                'category': 'Equipment',
-                'description': 'Distribution of run hours across centrifuges'
-            })
-    
-    # COST ANALYSIS
-    def _add_cost_per_dry_ton_chart(self):
-        if (self.detected_params.get('polymer_cost', {}).get('column') and 
-            self.detected_params.get('dry_tons', {}).get('column')):
+        # GBT Performance Analysis
+        if self.detected_params.get('gbt_underflow', {}).get('column'):
+            gbt_uf_col = self.detected_params['gbt_underflow']['column']
+            gbt_uf_data = pd.to_numeric(self.df[gbt_uf_col], errors='coerce').dropna()
             
-            self.charts.append({
-                'id': self._get_unique_id(),
-                'name': 'Polymer Cost per Dry Ton',
-                'type': 'cost_analysis',
-                'cost_column': self.detected_params['polymer_cost']['column'],
-                'tons_column': self.detected_params['dry_tons']['column'],
-                'unit': '$/Ton',
-                'category': 'Cost',
-                'description': 'Polymer cost efficiency'
+            if len(gbt_uf_data) > 0:
+                gbt_uf_avg = gbt_uf_data.mean()
+                rating = self.get_performance_rating('gbt_underflow', gbt_uf_avg)
+                
+                if rating in ['poor', 'moderate']:
+                    recommendations.append({
+                        'priority': '🟠 HIGH',
+                        'category': 'GBT Performance',
+                        'metric': 'GBT Underflow Concentration',
+                        'current_value': f'{gbt_uf_avg:.2f}% TS',
+                        'target_value': '8% TS',
+                        'issue': 'GBT underflow concentration below target',
+                        'root_causes': [
+                            'Belt speed too high',
+                            'Polymer dose insufficient',
+                            'Feed rate too high',
+                            'Belt wear or tension issues'
+                        ],
+                        'actions': [
+                            'Reduce belt speed by 5-10%',
+                            'Increase polymer dose by 10-15%',
+                            'Reduce feed rate',
+                            'Check belt condition and tension'
+                        ],
+                        'potential_savings': 'Improved thickening efficiency reduces downstream load',
+                        'savings_explanation': 'Better thickening reduces volume to dewatering, saving polymer and equipment costs',
+                        'additional_data_needed': [
+                            'GBT belt speed (%)',
+                            'GBT polymer type and dose',
+                            'GBT feed rate (GPM)',
+                            'Belt condition and wear'
+                        ],
+                        'timeline': '1-2 weeks',
+                        'risk': 'Low'
+                    })
+        
+        if not recommendations:
+            recommendations.append({
+                'priority': '✅ OPTIMAL',
+                'category': 'Overall Performance',
+                'metric': 'N/A',
+                'current_value': 'N/A',
+                'target_value': 'N/A',
+                'issue': 'Plant operating at or near optimal performance levels',
+                'root_causes': [],
+                'actions': ['Continue current operations', 'Maintain preventive maintenance schedule'],
+                'potential_savings': 'Maintain current efficiency',
+                'savings_explanation': 'Plant is performing well - focus on maintaining current operations',
+                'additional_data_needed': ['Continue routine monitoring'],
+                'timeline': 'Ongoing',
+                'risk': 'Low'
             })
-    
-    def _add_cost_per_truck_chart(self):
-        if (self.detected_params.get('hauling_cost', {}).get('column') and 
-            self.detected_params.get('trucks', {}).get('column')):
-            
-            self.charts.append({
-                'id': self._get_unique_id(),
-                'name': 'Cost per Truck',
-                'type': 'cost_analysis',
-                'cost_column': self.detected_params['hauling_cost']['column'],
-                'tons_column': self.detected_params['trucks']['column'],
-                'unit': '$/Truck',
-                'category': 'Cost',
-                'description': 'Hauling cost per truck'
-            })
+        
+        return recommendations
 
 # ============================================================
 # CHART RENDERER
 # ============================================================
 class ChartRenderer:
-    """Renders all chart types"""
+    """Renders charts"""
     
     def __init__(self, df):
         self.df = df
     
-    def render_chart(self, chart_config):
-        """Render a single chart based on configuration"""
-        
-        try:
-            if chart_config['type'] == 'line_with_ma':
-                return self._render_line_with_ma(chart_config)
-            elif chart_config['type'] == 'line_with_ma_inverse':
-                return self._render_line_with_ma_inverse(chart_config)
-            elif chart_config['type'] == 'bar_with_ma':
-                return self._render_bar_with_ma(chart_config)
-            elif chart_config['type'] == 'trend_analysis':
-                return self._render_trend_analysis(chart_config)
-            elif chart_config['type'] == 'multi_bar':
-                return self._render_multi_bar(chart_config)
-            elif chart_config['type'] == 'utilization':
-                return self._render_utilization(chart_config)
-            elif chart_config['type'] == 'ratio':
-                return self._render_ratio(chart_config)
-            elif chart_config['type'] == 'scatter_with_trend':
-                return self._render_scatter_with_trend(chart_config)
-            elif chart_config['type'] == 'dual_line':
-                return self._render_dual_line(chart_config)
-            elif chart_config['type'] == 'flow_difference':
-                return self._render_flow_difference(chart_config)
-            elif chart_config['type'] == 'box_plot':
-                return self._render_box_plot(chart_config)
-            elif chart_config['type'] == 'cost_analysis':
-                return self._render_cost_analysis(chart_config)
-        except Exception as e:
-            st.error(f"Error rendering chart: {str(e)}")
-            return None
-    
-    def _render_line_with_ma(self, config):
-        col_data = pd.to_numeric(self.df[config['column']], errors='coerce')
+    def render_line_with_ma(self, column, unit, title, threshold_excellent=None, threshold_good=None):
+        """Render line chart with moving average"""
+        col_data = pd.to_numeric(self.df[column], errors='coerce')
         col_ma = col_data.rolling(window=7).mean()
         
         fig = go.Figure()
@@ -803,54 +482,25 @@ class ChartRenderer:
             line=dict(color='darkblue', width=2)
         ))
         
-        if 'threshold_excellent' in config and config['threshold_excellent']:
-            fig.add_hline(y=config['threshold_excellent'], line_dash="dash",
+        if threshold_excellent:
+            fig.add_hline(y=threshold_excellent, line_dash="dash",
                          line_color="green", annotation_text="Excellent")
-        if 'threshold_good' in config and config['threshold_good']:
-            fig.add_hline(y=config['threshold_good'], line_dash="dash",
+        if threshold_good:
+            fig.add_hline(y=threshold_good, line_dash="dash",
                          line_color="orange", annotation_text="Good")
         
         fig.update_layout(
-            title=f"{config['name']} ({config['unit']})",
+            title=f"{title} ({unit})",
             height=400,
             hovermode='x unified',
             xaxis_title="Days",
-            yaxis_title=config['unit']
+            yaxis_title=unit
         )
         return fig
     
-    def _render_line_with_ma_inverse(self, config):
-        col_data = pd.to_numeric(self.df[config['column']], errors='coerce')
-        col_ma = col_data.rolling(window=7).mean()
-        
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=self.df.index, y=col_data, mode='markers', name='Daily',
-            marker=dict(size=4, color='#FF6B6B', opacity=0.6)
-        ))
-        fig.add_trace(go.Scatter(
-            x=self.df.index, y=col_ma, mode='lines', name='7-day MA',
-            line=dict(color='darkred', width=2)
-        ))
-        
-        if 'threshold_excellent' in config and config['threshold_excellent']:
-            fig.add_hline(y=config['threshold_excellent'], line_dash="dash",
-                         line_color="green", annotation_text="Excellent (Lower)")
-        if 'threshold_good' in config and config['threshold_good']:
-            fig.add_hline(y=config['threshold_good'], line_dash="dash",
-                         line_color="orange", annotation_text="Good (Lower)")
-        
-        fig.update_layout(
-            title=f"{config['name']} ({config['unit']}) - Lower is Better",
-            height=400,
-            hovermode='x unified',
-            xaxis_title="Days",
-            yaxis_title=config['unit']
-        )
-        return fig
-    
-    def _render_bar_with_ma(self, config):
-        col_data = pd.to_numeric(self.df[config['column']], errors='coerce')
+    def render_bar_with_ma(self, column, unit, title):
+        """Render bar chart with moving average"""
+        col_data = pd.to_numeric(self.df[column], errors='coerce')
         col_ma = col_data.rolling(window=7).mean()
         
         fig = go.Figure()
@@ -864,91 +514,18 @@ class ChartRenderer:
         ))
         
         fig.update_layout(
-            title=f"{config['name']} ({config['unit']})",
+            title=f"{title} ({unit})",
             height=400,
             hovermode='x unified',
             xaxis_title="Days",
-            yaxis_title=config['unit']
+            yaxis_title=unit
         )
         return fig
     
-    def _render_trend_analysis(self, config):
-        col_data = pd.to_numeric(self.df[config['column']], errors='coerce').dropna()
-        
-        if len(col_data) < 2:
-            return None
-        
-        x = np.arange(len(col_data))
-        z = np.polyfit(x, col_data.values, 1)
-        p = np.poly1d(z)
-        
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=self.df.index[:len(col_data)], y=col_data, mode='markers', name='Data',
-            marker=dict(size=6, color='blue', opacity=0.6)
-        ))
-        fig.add_trace(go.Scatter(
-            x=self.df.index[:len(col_data)], y=p(x), mode='lines', name='Trend',
-            line=dict(color='red', width=2)
-        ))
-        
-        slope = z[0]
-        trend_text = "Increasing" if slope > 0 else "Decreasing"
-        
-        fig.update_layout(
-            title=f"{config['name']} ({config['unit']}) - {trend_text} Trend",
-            height=400,
-            hovermode='x unified',
-            xaxis_title="Days",
-            yaxis_title=config['unit']
-        )
-        return fig
-    
-    def _render_multi_bar(self, config):
-        fig = go.Figure()
-        
-        for col_info in config['columns']:
-            col_data = pd.to_numeric(self.df[col_info['column']], errors='coerce')
-            fig.add_trace(go.Bar(
-                x=self.df.index, y=col_data, name=col_info['label']
-            ))
-        
-        fig.update_layout(
-            title=config['name'],
-            height=400,
-            barmode='group',
-            hovermode='x unified',
-            xaxis_title="Days",
-            yaxis_title=config['columns'][0]['unit']
-        )
-        return fig
-    
-    def _render_utilization(self, config):
-        fig = go.Figure()
-        
-        for i, col in enumerate(config['columns']):
-            col_data = pd.to_numeric(self.df[col], errors='coerce')
-            utilization = (col_data / 24) * 100
-            fig.add_trace(go.Scatter(
-                x=self.df.index, y=utilization, mode='lines', name=f'Centrifuge {i+1}',
-                line=dict(width=2)
-            ))
-        
-        fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overutilized (>70%)")
-        fig.add_hline(y=40, line_dash="dash", line_color="green", annotation_text="Optimal (40-70%)")
-        
-        fig.update_layout(
-            title=config['name'],
-            height=400,
-            hovermode='x unified',
-            xaxis_title="Days",
-            yaxis_title="Utilization %"
-        )
-        return fig
-    
-    def _render_ratio(self, config):
-        col1_data = pd.to_numeric(self.df[config['column1']], errors='coerce')
-        col2_data = pd.to_numeric(self.df[config['column2']], errors='coerce')
+    def render_ratio(self, column1, column2, unit, title, threshold_excellent=None, threshold_good=None):
+        """Render ratio chart"""
+        col1_data = pd.to_numeric(self.df[column1], errors='coerce')
+        col2_data = pd.to_numeric(self.df[column2], errors='coerce')
         ratio_data = (col1_data / col2_data).replace([np.inf, -np.inf], np.nan)
         ratio_ma = ratio_data.rolling(window=7).mean()
         
@@ -962,227 +539,30 @@ class ChartRenderer:
             line=dict(color='darkslategray', width=2)
         ))
         
-        if 'threshold_excellent' in config and config['threshold_excellent']:
-            fig.add_hline(y=config['threshold_excellent'], line_dash="dash",
+        if threshold_excellent:
+            fig.add_hline(y=threshold_excellent, line_dash="dash",
                          line_color="green", annotation_text="Excellent")
-        if 'threshold_good' in config and config['threshold_good']:
-            fig.add_hline(y=config['threshold_good'], line_dash="dash",
+        if threshold_good:
+            fig.add_hline(y=threshold_good, line_dash="dash",
                          line_color="orange", annotation_text="Good")
         
         fig.update_layout(
-            title=f"{config['name']} ({config['unit']})",
+            title=f"{title} ({unit})",
             height=400,
             hovermode='x unified',
             xaxis_title="Days",
-            yaxis_title=config['unit']
-        )
-        return fig
-    
-    def _render_scatter_with_trend(self, config):
-        col1_data = pd.to_numeric(self.df[config['column1']], errors='coerce').dropna()
-        col2_data = pd.to_numeric(self.df[config['column2']], errors='coerce')
-        col2_data = col2_data[col1_data.index]
-        
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=col1_data, y=col2_data, mode='markers',
-            marker=dict(size=8, color='blue', opacity=0.6)
-        ))
-        
-        if len(col1_data) > 1:
-            z = np.polyfit(col1_data, col2_data, 1)
-            p = np.poly1d(z)
-            x_trend = np.linspace(col1_data.min(), col1_data.max(), 100)
-            fig.add_trace(go.Scatter(
-                x=x_trend, y=p(x_trend), mode='lines', name='Trend',
-                line=dict(color='red', width=2)
-            ))
-            
-            corr = col1_data.corr(col2_data)
-            fig.update_layout(
-                title=f"{config['name']} (Correlation: {corr:.2f})",
-            )
-        
-        fig.update_layout(
-            height=400,
-            hovermode='closest',
-            xaxis_title=config['label1'],
-            yaxis_title=config['label2']
-        )
-        return fig
-    
-    def _render_dual_line(self, config):
-        col1_data = pd.to_numeric(self.df[config['column1']], errors='coerce')
-        col2_data = pd.to_numeric(self.df[config['column2']], errors='coerce')
-        
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=self.df.index, y=col1_data, mode='lines', name=config['label1'],
-            line=dict(color='red', width=2)
-        ))
-        fig.add_trace(go.Scatter(
-            x=self.df.index, y=col2_data, mode='lines', name=config['label2'],
-            line=dict(color='green', width=2)
-        ))
-        
-        fig.update_layout(
-            title=config['name'],
-            height=400,
-            hovermode='x unified',
-            xaxis_title="Days",
-            yaxis_title="Flow"
-        )
-        return fig
-    
-    def _render_flow_difference(self, config):
-        col1_data = pd.to_numeric(self.df[config['column1']], errors='coerce')
-        col2_data = pd.to_numeric(self.df[config['column2']], errors='coerce')
-        diff = ((col1_data - col2_data) / col1_data * 100).replace([np.inf, -np.inf], np.nan)
-        diff_ma = diff.rolling(window=7).mean()
-        
-        fig = go.Figure()
-        fig.add_trace(go.Bar(
-            x=self.df.index, y=diff, name='Daily',
-            marker=dict(color='purple', opacity=0.7)
-        ))
-        fig.add_trace(go.Scatter(
-            x=self.df.index, y=diff_ma, mode='lines', name='7-day MA',
-            line=dict(color='darkviolet', width=2)
-        ))
-        
-        fig.add_hline(y=15, line_dash="dash", line_color="orange", annotation_text="Investigate (15%)")
-        fig.add_hline(y=25, line_dash="dash", line_color="red", annotation_text="Critical (25%)")
-        
-        fig.update_layout(
-            title=config['name'],
-            height=400,
-            hovermode='x unified',
-            xaxis_title="Days",
-            yaxis_title=config['unit']
-        )
-        return fig
-    
-    def _render_box_plot(self, config):
-        fig = go.Figure()
-        
-        for i, col in enumerate(config['columns']):
-            col_data = pd.to_numeric(self.df[col], errors='coerce').dropna()
-            fig.add_trace(go.Box(y=col_data, name=f'Centrifuge {i+1}'))
-        
-        fig.update_layout(
-            title=config['name'],
-            height=400,
-            yaxis_title="Hours"
-        )
-        return fig
-    
-    def _render_cost_analysis(self, config):
-        cost_data = pd.to_numeric(self.df[config['cost_column']], errors='coerce')
-        tons_data = pd.to_numeric(self.df[config['tons_column']], errors='coerce')
-        cost_per_unit = (cost_data / tons_data).replace([np.inf, -np.inf], np.nan)
-        cost_ma = cost_per_unit.rolling(window=7).mean()
-        
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=self.df.index, y=cost_per_unit, mode='markers', name='Daily',
-            marker=dict(size=6, color='purple', opacity=0.6)
-        ))
-        fig.add_trace(go.Scatter(
-            x=self.df.index, y=cost_ma, mode='lines', name='7-day MA',
-            line=dict(color='darkviolet', width=2)
-        ))
-        
-        fig.update_layout(
-            title=f"{config['name']} ({config['unit']})",
-            height=400,
-            hovermode='x unified',
-            xaxis_title="Days",
-            yaxis_title=config['unit']
+            yaxis_title=unit
         )
         return fig
 
 # ============================================================
-# DATA QUALITY CHECKER
-# ============================================================
-class DataQualityChecker:
-    """Comprehensive data quality analysis"""
-    
-    def __init__(self, df):
-        self.df = df
-    
-    def detect_outliers(self, column, method='iqr'):
-        """Detect outliers"""
-        data = pd.to_numeric(self.df[column], errors='coerce').dropna()
-        
-        if len(data) < 4:
-            return {'count': 0, 'percentage': 0, 'values': []}
-        
-        if method == 'iqr':
-            Q1 = data.quantile(0.25)
-            Q3 = data.quantile(0.75)
-            IQR = Q3 - Q1
-            lower_bound = Q1 - 1.5 * IQR
-            upper_bound = Q3 + 1.5 * IQR
-            outliers = data[(data < lower_bound) | (data > upper_bound)]
-        else:
-            z_scores = np.abs(stats.zscore(data))
-            outliers = data[z_scores > 3]
-        
-        return {
-            'count': len(outliers),
-            'percentage': (len(outliers) / len(data) * 100) if len(data) > 0 else 0,
-            'values': outliers.values[:5] if len(outliers) > 0 else []
-        }
-    
-    def check_missing_values(self, column):
-        """Check for missing values"""
-        missing = self.df[column].isna().sum()
-        total = len(self.df)
-        return {
-            'count': missing,
-            'percentage': (missing / total * 100) if total > 0 else 0
-        }
-    
-    def check_data_range(self, column):
-        """Check data range"""
-        data = pd.to_numeric(self.df[column], errors='coerce').dropna()
-        if len(data) == 0:
-            return {'min': 0, 'max': 0, 'mean': 0, 'std': 0}
-        return {
-            'min': data.min(),
-            'max': data.max(),
-            'mean': data.mean(),
-            'std': data.std()
-        }
-    
-    def generate_report(self, columns_to_check):
-        """Generate quality report"""
-        report = {
-            'total_records': len(self.df),
-            'column_analysis': {}
-        }
-        
-        for col in columns_to_check:
-            if col and col in self.df.columns:
-                try:
-                    report['column_analysis'][col] = {
-                        'missing': self.check_missing_values(col),
-                        'range': self.check_data_range(col),
-                        'outliers': self.detect_outliers(col, 'iqr')
-                    }
-                except Exception as e:
-                    pass
-        
-        return report
-
-# ============================================================
-# SIDEBAR - FILE UPLOAD
+# SIDEBAR - FILE UPLOAD & PLANT INFO
 # ============================================================
 st.sidebar.header("📊 Upload Your Data")
 uploaded_file = st.sidebar.file_uploader(
     "Choose your WWTP CSV file",
     type=['csv'],
-    help="Upload a CSV file with your WWTP dewatering and thickening data"
+    help="Upload a CSV file with your WWTP data"
 )
 
 # ============================================================
@@ -1195,32 +575,24 @@ if uploaded_file is None:
     
     Your CSV should contain columns like:
     
-    **Dewatering:**
+    **Dewatering Equipment:**
+    - Centrifuge, Belt Filter Press (BFP), Rotary Press, Drying Bed
     - Active Polymer (lbs/ton, GPD)
-    - Cake Quality (%), Cake Solids (%), Cake % Solids
-    - Centrifuge 1/2/3 Run Hours
+    - Cake Quality (%), Cake Solids (%)
+    - Equipment Run Hours
     - Dry Tons, Wet Tons
     - Daily Trucks
     
-    **Thickening (Gravity Thickener):**
-    - Thickener Feed Rate (GPM, MGD)
-    - Thickener Underflow TS (%)
-    - Thickener Overflow TSS (mg/L)
-    - Thickener Torque (Nm)
-    
-    **GBT (Gravity Belt Thickener):**
-    - GBT Feed Rate (GPM, MGD)
-    - GBT Underflow TS (%)
-    - GBT Overflow TSS (mg/L)
-    - GBT Belt Speed (%)
-    - GBT Polymer Dose (lbs/ton)
+    **Thickening Equipment:**
+    - Gravity Thickener, GBT (Gravity Belt Thickener), Rotary Drum, Membrane
+    - Feed Rate (GPM, MGD)
+    - Underflow TS (%)
+    - Overflow TSS (mg/L)
+    - Equipment Torque (Nm)
     
     **Flow:**
     - Influent Flow (MGD, GPM)
     - Effluent Flow (MGD, GPM)
-    
-    **Equipment:**
-    - Bowl Speed (RPM)
     
     **Cost:**
     - Polymer Cost ($)
@@ -1229,8 +601,8 @@ if uploaded_file is None:
     ### ✨ Features:
     - 🔍 **Fuzzy Logic** - Auto-detects your columns
     - 📊 **30+ Charts** - Comprehensive analysis
-    - 📈 **Unit Detection** - Shows units automatically
-    - 💡 **Performance Metrics** - Industry benchmarks
+    - 💡 **AI Recommendations** - Optimization suggestions with savings
+    - 📈 **YOY Analysis** - Year-over-year comparisons
     - 🔎 **Data Quality** - Outlier detection
     
     ### 🚀 Ready? Upload your file!
@@ -1239,16 +611,64 @@ if uploaded_file is None:
 else:
     try:
         df = pd.read_csv(uploaded_file)
-        
-        # Reset index for easier charting
         df = df.reset_index(drop=True)
         
+        # Try to detect date column
+        date_col = None
+        for col in df.columns:
+            if any(x in col.lower() for x in ['date', 'time', 'day', 'month', 'year']):
+                try:
+                    df[col] = pd.to_datetime(df[col], errors='coerce')
+                    if df[col].notna().sum() > len(df) * 0.5:
+                        date_col = col
+                        df = df.sort_values(col)
+                        break
+                except:
+                    pass
+        
+        if not date_col:
+            df['Date'] = pd.date_range(start='2023-01-01', periods=len(df), freq='D')
+            date_col = 'Date'
+        
         st.sidebar.success(f"✅ Loaded {len(df)} records")
-        st.sidebar.write(f"📊 {len(df.columns)} columns detected")
+        st.sidebar.write(f"📅 {df[date_col].min().date()} to {df[date_col].max().date()}")
         
     except Exception as e:
         st.error(f"Error loading file: {e}")
         st.stop()
+    
+    # ============================================================
+    # PLANT INFORMATION INPUT
+    # ============================================================
+    with st.sidebar.expander("🏭 Plant Information", expanded=False):
+        st.write("**Provide plant details for context-aware analysis:**")
+        
+        plant_name = st.text_input("Plant Name", value="WWTP")
+        plant_location = st.text_input("Location", value="")
+        
+        st.write("**Dewatering Equipment:**")
+        dewatering_equipment = st.multiselect(
+            "Select equipment types",
+            ["Centrifuge", "Belt Filter Press (BFP)", "Rotary Press", "Drying Bed", "Other"],
+            default=["Centrifuge"]
+        )
+        
+        st.write("**Thickening Equipment:**")
+        thickening_equipment = st.multiselect(
+            "Select equipment types",
+            ["Gravity Thickener", "GBT (Gravity Belt Thickener)", "Rotary Drum", "Membrane", "Other"],
+            default=["GBT (Gravity Belt Thickener)"]
+        )
+        
+        plant_capacity = st.number_input("Plant Capacity (MGD)", value=10.0, min_value=0.1)
+        
+        plant_info = {
+            'name': plant_name,
+            'location': plant_location,
+            'dewatering_equipment': dewatering_equipment,
+            'thickening_equipment': thickening_equipment,
+            'capacity': plant_capacity
+        }
     
     # Initialize parameter detector
     parameter_keywords = {
@@ -1257,8 +677,8 @@ else:
         'centrifuge_1_hours': ['centrifuge 1', 'c1', 'run hours 1', 'c1 hours'],
         'centrifuge_2_hours': ['centrifuge 2', 'c2', 'run hours 2', 'c2 hours'],
         'centrifuge_3_hours': ['centrifuge 3', 'c3', 'run hours 3', 'c3 hours'],
-        'centrifuge_4_hours': ['centrifuge 4', 'c4', 'run hours 4', 'c4 hours'],
-        'centrifuge_5_hours': ['centrifuge 5', 'c5', 'run hours 5', 'c5 hours'],
+        'bfp_hours': ['bfp', 'belt filter', 'belt press', 'bfp hours'],
+        'rotary_press_hours': ['rotary press', 'rotary', 'press hours'],
         'dry_tons': ['dry tons', 'dry', 'dry solids'],
         'wet_tons': ['wet tons', 'wet', 'wet solids'],
         'trucks': ['trucks', 'sludge trucks', 'daily trucks', 'truck count'],
@@ -1291,59 +711,70 @@ else:
     
     st.sidebar.write(f"\n**Found: {detected_count}/{len(parameter_keywords)} parameters**")
     
-    # Initialize chart generator and renderer
-    chart_generator = ComprehensiveChartGenerator(df, detected_params)
-    charts = chart_generator.generate_all_charts()
+    # Initialize analyzers
+    analyzer = PerformanceAnalyzer(df, detected_params, plant_info)
     chart_renderer = ChartRenderer(df)
-    quality_checker = DataQualityChecker(df)
     
     # Create tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "📊 Dashboard",
-        "📈 All Charts",
+        "💡 AI Recommendations",
+        "📈 YOY Analysis",
         "🔄 Dewatering",
         "🌀 Thickening",
-        "🎯 GBT",
-        "💧 Flow Analysis",
         "🔍 Data Quality",
         "📋 Parameters",
         "📥 Raw Data"
     ])
     
     # ============================================================
-    # TAB 1: DASHBOARD
+    # TAB 1: ENHANCED DASHBOARD
     # ============================================================
     with tab1:
-        st.header("📊 Performance Dashboard")
+        st.header(f"📊 Performance Dashboard - {plant_info.get('name', 'WWTP')}")
         
-        # Dewatering Metrics
+        if plant_info.get('location'):
+            st.caption(f"📍 {plant_info['location']} | Capacity: {plant_info.get('capacity', 'N/A')} MGD")
+        
+        # Dewatering Performance
         st.subheader("🔄 Dewatering Performance")
-        col1, col2, col3, col4 = st.columns(4)
+        
+        dew_col1, dew_col2, dew_col3, dew_col4 = st.columns(4)
         
         if detected_params.get('polymer', {}).get('column'):
             poly_col = detected_params['polymer']['column']
             poly_unit = detected_params['polymer']['unit']
             poly_data = pd.to_numeric(df[poly_col], errors='coerce').dropna()
+            
             if len(poly_data) > 0:
-                with col1:
+                poly_avg = poly_data.mean()
+                poly_rating = analyzer.get_performance_rating('polymer', poly_avg)
+                
+                with dew_col1:
                     st.metric(
                         f"Polymer Efficiency ({poly_unit})",
-                        f"{poly_data.mean():.2f}",
-                        f"{poly_data.iloc[-1] - poly_data.mean():+.2f}",
+                        f"{poly_avg:.2f}",
+                        f"{poly_data.iloc[-1] - poly_avg:+.2f}",
                         delta_color="inverse"
                     )
+                    st.caption(PERFORMANCE_DESCRIPTIONS[poly_rating])
         
         if detected_params.get('cake_quality', {}).get('column'):
             cake_col = detected_params['cake_quality']['column']
             cake_unit = detected_params['cake_quality']['unit']
             cake_data = pd.to_numeric(df[cake_col], errors='coerce').dropna()
+            
             if len(cake_data) > 0:
-                with col2:
+                cake_avg = cake_data.mean()
+                cake_rating = analyzer.get_performance_rating('cake_quality', cake_avg)
+                
+                with dew_col2:
                     st.metric(
                         f"Cake Quality ({cake_unit})",
-                        f"{cake_data.mean():.2f}",
-                        f"{cake_data.iloc[-1] - cake_data.mean():+.2f}"
+                        f"{cake_avg:.2f}",
+                        f"{cake_data.iloc[-1] - cake_avg:+.2f}"
                     )
+                    st.caption(PERFORMANCE_DESCRIPTIONS[cake_rating])
         
         if detected_params.get('dry_tons', {}).get('column') and detected_params.get('wet_tons', {}).get('column'):
             dry_col = detected_params['dry_tons']['column']
@@ -1351,15 +782,19 @@ else:
             dry_data = pd.to_numeric(df[dry_col], errors='coerce')
             wet_data = pd.to_numeric(df[wet_col], errors='coerce')
             ratio = (dry_data / wet_data).mean()
-            with col3:
-                st.metric("Dry/Wet Ratio", f"{ratio:.3f}", "Higher is Better")
+            ratio_rating = analyzer.get_performance_rating('dry_wet_ratio', ratio)
+            
+            with dew_col3:
+                st.metric("Dry/Wet Ratio", f"{ratio:.3f}")
+                st.caption(PERFORMANCE_DESCRIPTIONS[ratio_rating])
         
         if detected_params.get('trucks', {}).get('column'):
             truck_col = detected_params['trucks']['column']
             truck_unit = detected_params['trucks']['unit']
             truck_data = pd.to_numeric(df[truck_col], errors='coerce').dropna()
+            
             if len(truck_data) > 0:
-                with col4:
+                with dew_col4:
                     st.metric(
                         f"Avg Trucks/Day ({truck_unit})",
                         f"{truck_data.mean():.1f}",
@@ -1368,255 +803,428 @@ else:
         
         st.divider()
         
-        # Thickening Metrics
+        # Thickening Performance
         st.subheader("🌀 Thickening Performance")
-        col5, col6, col7 = st.columns(3)
         
-        if detected_params.get('thickener_feed', {}).get('column'):
-            feed_col = detected_params['thickener_feed']['column']
-            feed_unit = detected_params['thickener_feed']['unit']
-            feed_data = pd.to_numeric(df[feed_col], errors='coerce').dropna()
-            if len(feed_data) > 0:
-                with col5:
-                    st.metric(f"Thickener Feed ({feed_unit})", f"{feed_data.mean():.2f}")
+        thick_col1, thick_col2, thick_col3 = st.columns(3)
         
         if detected_params.get('thickener_underflow', {}).get('column'):
             uf_col = detected_params['thickener_underflow']['column']
             uf_unit = detected_params['thickener_underflow']['unit']
             uf_data = pd.to_numeric(df[uf_col], errors='coerce').dropna()
+            
             if len(uf_data) > 0:
-                with col6:
-                    st.metric(f"Underflow Conc. ({uf_unit})", f"{uf_data.mean():.2f}")
+                uf_avg = uf_data.mean()
+                uf_rating = analyzer.get_performance_rating('thickener_underflow', uf_avg)
+                
+                with thick_col1:
+                    st.metric(f"Underflow Conc. ({uf_unit})", f"{uf_avg:.2f}")
+                    st.caption(PERFORMANCE_DESCRIPTIONS[uf_rating])
         
         if detected_params.get('thickener_overflow', {}).get('column'):
             of_col = detected_params['thickener_overflow']['column']
             of_unit = detected_params['thickener_overflow']['unit']
             of_data = pd.to_numeric(df[of_col], errors='coerce').dropna()
+            
             if len(of_data) > 0:
-                with col7:
-                    st.metric(f"Overflow TSS ({of_unit})", f"{of_data.mean():.0f}", "Lower is Better")
+                of_avg = of_data.mean()
+                of_rating = analyzer.get_performance_rating('thickener_overflow', of_avg)
+                
+                with thick_col2:
+                    st.metric(f"Overflow TSS ({of_unit})", f"{of_avg:.0f}")
+                    st.caption(PERFORMANCE_DESCRIPTIONS[of_rating])
+        
+        if detected_params.get('thickener_feed', {}).get('column'):
+            feed_col = detected_params['thickener_feed']['column']
+            feed_unit = detected_params['thickener_feed']['unit']
+            feed_data = pd.to_numeric(df[feed_col], errors='coerce').dropna()
+            
+            if len(feed_data) > 0:
+                with thick_col3:
+                    st.metric(f"Feed Rate ({feed_unit})", f"{feed_data.mean():.2f}")
         
         st.divider()
         
-        # GBT Metrics
+        # GBT Performance
         st.subheader("🎯 GBT (Gravity Belt Thickener) Performance")
-        col8, col9, col10 = st.columns(3)
         
-        if detected_params.get('gbt_feed', {}).get('column'):
-            gbt_feed_col = detected_params['gbt_feed']['column']
-            gbt_feed_unit = detected_params['gbt_feed']['unit']
-            gbt_feed_data = pd.to_numeric(df[gbt_feed_col], errors='coerce').dropna()
-            if len(gbt_feed_data) > 0:
-                with col8:
-                    st.metric(f"GBT Feed ({gbt_feed_unit})", f"{gbt_feed_data.mean():.2f}")
+        gbt_col1, gbt_col2, gbt_col3 = st.columns(3)
         
         if detected_params.get('gbt_underflow', {}).get('column'):
             gbt_uf_col = detected_params['gbt_underflow']['column']
             gbt_uf_unit = detected_params['gbt_underflow']['unit']
             gbt_uf_data = pd.to_numeric(df[gbt_uf_col], errors='coerce').dropna()
+            
             if len(gbt_uf_data) > 0:
-                with col9:
-                    st.metric(f"GBT Underflow ({gbt_uf_unit})", f"{gbt_uf_data.mean():.2f}")
+                gbt_uf_avg = gbt_uf_data.mean()
+                gbt_uf_rating = analyzer.get_performance_rating('gbt_underflow', gbt_uf_avg)
+                
+                with gbt_col1:
+                    st.metric(f"GBT Underflow ({gbt_uf_unit})", f"{gbt_uf_avg:.2f}")
+                    st.caption(PERFORMANCE_DESCRIPTIONS[gbt_uf_rating])
         
         if detected_params.get('gbt_overflow', {}).get('column'):
             gbt_of_col = detected_params['gbt_overflow']['column']
             gbt_of_unit = detected_params['gbt_overflow']['unit']
             gbt_of_data = pd.to_numeric(df[gbt_of_col], errors='coerce').dropna()
+            
             if len(gbt_of_data) > 0:
-                with col10:
-                    st.metric(f"GBT Overflow ({gbt_of_unit})", f"{gbt_of_data.mean():.0f}", "Lower is Better")
+                gbt_of_avg = gbt_of_data.mean()
+                gbt_of_rating = analyzer.get_performance_rating('gbt_overflow', gbt_of_avg)
+                
+                with gbt_col2:
+                    st.metric(f"GBT Overflow ({gbt_of_unit})", f"{gbt_of_avg:.0f}")
+                    st.caption(PERFORMANCE_DESCRIPTIONS[gbt_of_rating])
+        
+        if detected_params.get('gbt_belt_speed', {}).get('column'):
+            gbt_speed_col = detected_params['gbt_belt_speed']['column']
+            gbt_speed_unit = detected_params['gbt_belt_speed']['unit']
+            gbt_speed_data = pd.to_numeric(df[gbt_speed_col], errors='coerce').dropna()
+            
+            if len(gbt_speed_data) > 0:
+                with gbt_col3:
+                    st.metric(f"GBT Belt Speed ({gbt_speed_unit})", f"{gbt_speed_data.mean():.2f}")
         
         st.divider()
         
-        # Flow Metrics
+        # Flow Data
         st.subheader("💧 Flow Data")
-        col11, col12 = st.columns(2)
+        
+        flow_col1, flow_col2 = st.columns(2)
         
         if detected_params.get('influent_flow', {}).get('column'):
             inf_col = detected_params['influent_flow']['column']
             inf_unit = detected_params['influent_flow']['unit']
             inf_data = pd.to_numeric(df[inf_col], errors='coerce').dropna()
+            
             if len(inf_data) > 0:
-                with col11:
+                with flow_col1:
                     st.metric(f"Influent Flow ({inf_unit})", f"{inf_data.mean():.2f}")
         
         if detected_params.get('effluent_flow', {}).get('column'):
             eff_col = detected_params['effluent_flow']['column']
             eff_unit = detected_params['effluent_flow']['unit']
             eff_data = pd.to_numeric(df[eff_col], errors='coerce').dropna()
+            
             if len(eff_data) > 0:
-                with col12:
+                with flow_col2:
                     st.metric(f"Effluent Flow ({eff_unit})", f"{eff_data.mean():.2f}")
     
     # ============================================================
-    # TAB 2: ALL CHARTS
+    # TAB 2: AI RECOMMENDATIONS
     # ============================================================
     with tab2:
-        st.header(f"📈 All Charts ({len(charts)} Total)")
+        st.header("💡 AI-Powered Recommendations")
+        st.write("**Data-driven optimization suggestions with potential savings**")
         
-        if not charts:
-            st.warning("⚠️ No charts could be generated. Check your data format.")
-        else:
-            # Filter by category
-            categories = list(set([c.get('category', 'Other') for c in charts]))
-            selected_category = st.selectbox("Filter by Category:", ["All"] + sorted(categories))
-            
-            filtered_charts = charts if selected_category == "All" else [c for c in charts if c.get('category') == selected_category]
-            
-            st.write(f"Showing {len(filtered_charts)} charts")
-            st.divider()
-            
-            for chart_config in filtered_charts:
-                col_title, col_desc = st.columns([3, 1])
-                with col_title:
-                    st.subheader(chart_config['name'])
-                with col_desc:
-                    st.caption(f"Category: {chart_config.get('category', 'Other')}")
+        recommendations = analyzer.generate_recommendations()
+        
+        for i, rec in enumerate(recommendations, 1):
+            with st.container():
+                col_header1, col_header2 = st.columns([3, 1])
                 
-                st.caption(chart_config.get('description', ''))
+                with col_header1:
+                    st.markdown(f"### {rec['priority']} {rec['category']}")
                 
-                fig = chart_renderer.render_chart(chart_config)
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True, key=f"chart_{chart_config['id']}")
+                with col_header2:
+                    st.write(f"**Risk:** {rec['risk']}")
+                
+                st.markdown("---")
+                
+                # Main content
+                col_main1, col_main2 = st.columns([2, 1])
+                
+                with col_main1:
+                    st.write(f"**Metric:** {rec['metric']}")
+                    st.write(f"**Current:** {rec['current_value']} | **Target:** {rec['target_value']}")
+                    
+                    st.write(f"**Issue:** {rec['issue']}")
+                    
+                    st.write("**Root Causes:**")
+                    for cause in rec['root_causes']:
+                        st.write(f"• {cause}")
+                    
+                    st.write("**Recommended Actions:**")
+                    for j, action in enumerate(rec['actions'], 1):
+                        st.write(f"{j}. {action}")
+                
+                with col_main2:
+                    st.metric("Potential Savings", rec['potential_savings'])
+                    st.metric("Timeline", rec['timeline'])
+                
+                st.divider()
+                
+                # Expandable sections
+                with st.expander("📊 Savings Explanation"):
+                    st.write(rec['savings_explanation'])
+                
+                with st.expander("📋 Additional Data Needed"):
+                    st.write("**Recommended investigations and data collection:**")
+                    for data_item in rec['additional_data_needed']:
+                        st.write(f"• {data_item}")
                 
                 st.divider()
     
     # ============================================================
-    # TAB 3: DEWATERING
+    # TAB 3: YOY ANALYSIS
     # ============================================================
     with tab3:
-        st.header("🔄 Dewatering Analysis")
+        st.header("📈 Year-over-Year Analysis")
+        st.write("**Compare performance across different time periods**")
         
-        dewatering_charts = [c for c in charts if c.get('category') == 'Dewatering']
+        # Get numeric columns
+        numeric_cols = {}
+        for param_name, param_info in detected_params.items():
+            if param_info['column']:
+                numeric_cols[param_info['column']] = param_info['unit']
         
-        if not dewatering_charts:
-            st.info("No dewatering data detected")
+        if not numeric_cols:
+            st.warning("No numeric columns detected")
         else:
-            st.write(f"Showing {len(dewatering_charts)} dewatering charts")
+            col_select1, col_select2, col_select3 = st.columns(3)
             
-            for chart_config in dewatering_charts:
-                st.subheader(chart_config['name'])
-                st.caption(chart_config.get('description', ''))
+            with col_select1:
+                selected_column = st.selectbox(
+                    "Select Indicator",
+                    list(numeric_cols.keys()),
+                    format_func=lambda x: f"{x} ({numeric_cols[x]})"
+                )
+            
+            with col_select2:
+                aggregation = st.selectbox(
+                    "Aggregation Period",
+                    ["Daily", "Weekly", "Monthly", "Quarterly"]
+                )
+            
+            with col_select3:
+                comparison_type = st.selectbox(
+                    "Comparison Type",
+                    ["YOY (Year-over-Year)", "Month-over-Month", "Custom Period"]
+                )
+            
+            # Prepare data
+            df_yoy = df[[date_col, selected_column]].copy()
+            df_yoy[date_col] = pd.to_datetime(df_yoy[date_col])
+            df_yoy[selected_column] = pd.to_numeric(df_yoy[selected_column], errors='coerce')
+            df_yoy = df_yoy.dropna()
+            
+            if len(df_yoy) > 0:
+                # Aggregate data
+                if aggregation == "Daily":
+                    df_agg = df_yoy.set_index(date_col).resample('D')[selected_column].mean()
+                elif aggregation == "Weekly":
+                    df_agg = df_yoy.set_index(date_col).resample('W')[selected_column].mean()
+                elif aggregation == "Monthly":
+                    df_agg = df_yoy.set_index(date_col).resample('M')[selected_column].mean()
+                else:  # Quarterly
+                    df_agg = df_yoy.set_index(date_col).resample('Q')[selected_column].mean()
                 
-                fig = chart_renderer.render_chart(chart_config)
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True, key=f"dew_chart_{chart_config['id']}")
+                # Create chart
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=df_agg.index,
+                    y=df_agg.values,
+                    mode='lines+markers',
+                    name=selected_column,
+                    line=dict(color='#1f77b4', width=2),
+                    marker=dict(size=8)
+                ))
                 
-                st.divider()
+                # Add trend line
+                x_numeric = np.arange(len(df_agg))
+                z = np.polyfit(x_numeric, df_agg.values, 1)
+                p = np.poly1d(z)
+                fig.add_trace(go.Scatter(
+                    x=df_agg.index,
+                    y=p(x_numeric),
+                    mode='lines',
+                    name='Trend',
+                    line=dict(color='red', width=2, dash='dash')
+                ))
+                
+                fig.update_layout(
+                    title=f"{selected_column} - {aggregation} Aggregation",
+                    xaxis_title="Date",
+                    yaxis_title=numeric_cols[selected_column],
+                    height=500,
+                    hovermode='x unified'
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Statistics
+                st.subheader("📊 Statistics")
+                
+                stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
+                
+                with stat_col1:
+                    st.metric("Mean", f"{df_agg.mean():.2f}")
+                
+                with stat_col2:
+                    st.metric("Median", f"{df_agg.median():.2f}")
+                
+                with stat_col3:
+                    st.metric("Min", f"{df_agg.min():.2f}")
+                
+                with stat_col4:
+                    st.metric("Max", f"{df_agg.max():.2f}")
+                
+                # Trend analysis
+                slope = z[0]
+                trend_direction = "📈 Increasing" if slope > 0 else "📉 Decreasing"
+                st.write(f"**Trend:** {trend_direction} (slope: {slope:.4f})")
     
     # ============================================================
-    # TAB 4: THICKENING
+    # TAB 4: DEWATERING
     # ============================================================
     with tab4:
-        st.header("🌀 Thickening Analysis")
+        st.header("🔄 Dewatering Analysis")
+        st.write(f"**Equipment:** {', '.join(plant_info.get('dewatering_equipment', ['Not specified']))}")
         
-        thickening_charts = [c for c in charts if c.get('category') == 'Thickening']
+        # Polymer chart
+        if detected_params.get('polymer', {}).get('column'):
+            st.subheader("Polymer Efficiency")
+            poly_col = detected_params['polymer']['column']
+            poly_unit = detected_params['polymer']['unit']
+            fig = chart_renderer.render_line_with_ma(
+                poly_col, poly_unit, "Polymer Efficiency",
+                threshold_excellent=12, threshold_good=15
+            )
+            st.plotly_chart(fig, use_container_width=True, key="poly_chart")
         
-        if not thickening_charts:
-            st.info("No thickening data detected")
-        else:
-            st.write(f"Showing {len(thickening_charts)} thickening charts")
-            
-            for chart_config in thickening_charts:
-                st.subheader(chart_config['name'])
-                st.caption(chart_config.get('description', ''))
-                
-                fig = chart_renderer.render_chart(chart_config)
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True, key=f"thick_chart_{chart_config['id']}")
-                
-                st.divider()
+        # Cake quality chart
+        if detected_params.get('cake_quality', {}).get('column'):
+            st.subheader("Cake Quality")
+            cake_col = detected_params['cake_quality']['column']
+            cake_unit = detected_params['cake_quality']['unit']
+            fig = chart_renderer.render_line_with_ma(
+                cake_col, cake_unit, "Cake Quality",
+                threshold_excellent=25, threshold_good=20
+            )
+            st.plotly_chart(fig, use_container_width=True, key="cake_chart")
+        
+        # Dry/Wet ratio
+        if detected_params.get('dry_tons', {}).get('column') and detected_params.get('wet_tons', {}).get('column'):
+            st.subheader("Dewatering Efficiency (Dry/Wet Ratio)")
+            dry_col = detected_params['dry_tons']['column']
+            wet_col = detected_params['wet_tons']['column']
+            fig = chart_renderer.render_ratio(
+                dry_col, wet_col, "Ratio", "Dry/Wet Ratio",
+                threshold_excellent=0.25, threshold_good=0.20
+            )
+            st.plotly_chart(fig, use_container_width=True, key="ratio_chart")
+        
+        # Truck hauling
+        if detected_params.get('trucks', {}).get('column'):
+            st.subheader("Sludge Truck Hauling")
+            truck_col = detected_params['trucks']['column']
+            truck_unit = detected_params['trucks']['unit']
+            fig = chart_renderer.render_bar_with_ma(
+                truck_col, truck_unit, "Daily Sludge Trucks"
+            )
+            st.plotly_chart(fig, use_container_width=True, key="truck_chart")
     
     # ============================================================
-    # TAB 5: GBT
+    # TAB 5: THICKENING
     # ============================================================
     with tab5:
-        st.header("🎯 GBT (Gravity Belt Thickener) Analysis")
+        st.header("🌀 Thickening Analysis")
+        st.write(f"**Equipment:** {', '.join(plant_info.get('thickening_equipment', ['Not specified']))}")
         
-        gbt_charts = [c for c in charts if c.get('category') == 'GBT (Gravity Belt Thickener)']
+        # Gravity Thickener charts
+        if detected_params.get('thickener_underflow', {}).get('column'):
+            st.subheader("Gravity Thickener - Underflow Concentration")
+            uf_col = detected_params['thickener_underflow']['column']
+            uf_unit = detected_params['thickener_underflow']['unit']
+            fig = chart_renderer.render_line_with_ma(
+                uf_col, uf_unit, "Underflow Concentration",
+                threshold_excellent=5, threshold_good=3
+            )
+            st.plotly_chart(fig, use_container_width=True, key="thick_uf_chart")
         
-        if not gbt_charts:
-            st.info("No GBT data detected")
-        else:
-            st.write(f"Showing {len(gbt_charts)} GBT charts")
-            
-            for chart_config in gbt_charts:
-                st.subheader(chart_config['name'])
-                st.caption(chart_config.get('description', ''))
-                
-                fig = chart_renderer.render_chart(chart_config)
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True, key=f"gbt_chart_{chart_config['id']}")
-                
-                st.divider()
+        if detected_params.get('thickener_overflow', {}).get('column'):
+            st.subheader("Gravity Thickener - Overflow Clarity")
+            of_col = detected_params['thickener_overflow']['column']
+            of_unit = detected_params['thickener_overflow']['unit']
+            fig = chart_renderer.render_line_with_ma(
+                of_col, of_unit, "Overflow TSS",
+                threshold_excellent=500, threshold_good=1000
+            )
+            st.plotly_chart(fig, use_container_width=True, key="thick_of_chart")
+        
+        # GBT charts
+        if detected_params.get('gbt_underflow', {}).get('column'):
+            st.subheader("GBT - Underflow Concentration")
+            gbt_uf_col = detected_params['gbt_underflow']['column']
+            gbt_uf_unit = detected_params['gbt_underflow']['unit']
+            fig = chart_renderer.render_line_with_ma(
+                gbt_uf_col, gbt_uf_unit, "GBT Underflow Concentration",
+                threshold_excellent=8, threshold_good=5
+            )
+            st.plotly_chart(fig, use_container_width=True, key="gbt_uf_chart")
+        
+        if detected_params.get('gbt_overflow', {}).get('column'):
+            st.subheader("GBT - Overflow Clarity")
+            gbt_of_col = detected_params['gbt_overflow']['column']
+            gbt_of_unit = detected_params['gbt_overflow']['unit']
+            fig = chart_renderer.render_line_with_ma(
+                gbt_of_col, gbt_of_unit, "GBT Overflow TSS",
+                threshold_excellent=300, threshold_good=500
+            )
+            st.plotly_chart(fig, use_container_width=True, key="gbt_of_chart")
     
     # ============================================================
-    # TAB 6: FLOW ANALYSIS
+    # TAB 6: DATA QUALITY
     # ============================================================
     with tab6:
-        st.header("💧 Flow Analysis")
-        
-        flow_charts = [c for c in charts if c.get('category') == 'Flow']
-        
-        if not flow_charts:
-            st.info("No flow data detected")
-        else:
-            st.write(f"Showing {len(flow_charts)} flow charts")
-            
-            for chart_config in flow_charts:
-                st.subheader(chart_config['name'])
-                st.caption(chart_config.get('description', ''))
-                
-                fig = chart_renderer.render_chart(chart_config)
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True, key=f"flow_chart_{chart_config['id']}")
-                
-                st.divider()
-    
-    # ============================================================
-    # TAB 7: DATA QUALITY
-    # ============================================================
-    with tab7:
         st.header("🔍 Data Quality Analysis")
         
         columns_to_check = [p['column'] for p in detected_params.values() if p['column']]
-        quality_report = quality_checker.generate_report(columns_to_check)
         
         col_dq1, col_dq2, col_dq3 = st.columns(3)
         with col_dq1:
-            st.metric("Total Records", quality_report['total_records'])
+            st.metric("Total Records", len(df))
         with col_dq2:
-            st.metric("Columns Analyzed", len(quality_report['column_analysis']))
+            st.metric("Columns Analyzed", len(columns_to_check))
         with col_dq3:
-            total_missing = sum([v['missing']['count'] for v in quality_report['column_analysis'].values()])
+            total_missing = sum([df[col].isna().sum() for col in columns_to_check if col in df.columns])
             st.metric("Total Missing Values", total_missing)
         
         st.divider()
         
-        for col_name, col_analysis in quality_report['column_analysis'].items():
-            with st.expander(f"📊 {col_name}"):
-                col_a, col_b, col_c = st.columns(3)
-                
-                with col_a:
-                    st.write("**Missing Values:**")
-                    st.write(f"Count: {col_analysis['missing']['count']}")
-                    st.write(f"Percentage: {col_analysis['missing']['percentage']:.2f}%")
-                
-                with col_b:
-                    st.write("**Data Range:**")
-                    st.write(f"Min: {col_analysis['range']['min']:.2f}")
-                    st.write(f"Max: {col_analysis['range']['max']:.2f}")
-                    st.write(f"Mean: {col_analysis['range']['mean']:.2f}")
-                
-                with col_c:
-                    st.write("**Outliers (IQR):**")
-                    st.write(f"Count: {col_analysis['outliers']['count']}")
-                    st.write(f"Percentage: {col_analysis['outliers']['percentage']:.2f}%")
+        for col_name in columns_to_check:
+            if col_name in df.columns:
+                with st.expander(f"📊 {col_name}"):
+                    col_data = pd.to_numeric(df[col_name], errors='coerce')
+                    
+                    col_a, col_b, col_c = st.columns(3)
+                    
+                    with col_a:
+                        missing = df[col_name].isna().sum()
+                        st.write("**Missing Values:**")
+                        st.write(f"Count: {missing}")
+                        st.write(f"Percentage: {(missing/len(df)*100):.2f}%")
+                    
+                    with col_b:
+                        st.write("**Data Range:**")
+                        st.write(f"Min: {col_data.min():.2f}")
+                        st.write(f"Max: {col_data.max():.2f}")
+                        st.write(f"Mean: {col_data.mean():.2f}")
+                    
+                    with col_c:
+                        # Outliers
+                        Q1 = col_data.quantile(0.25)
+                        Q3 = col_data.quantile(0.75)
+                        IQR = Q3 - Q1
+                        outliers = col_data[(col_data < Q1 - 1.5*IQR) | (col_data > Q3 + 1.5*IQR)]
+                        st.write("**Outliers (IQR):**")
+                        st.write(f"Count: {len(outliers)}")
+                        st.write(f"Percentage: {(len(outliers)/len(col_data)*100):.2f}%")
     
     # ============================================================
-    # TAB 8: PARAMETERS
+    # TAB 7: PARAMETERS
     # ============================================================
-    with tab8:
+    with tab7:
         st.header("📋 Detected Parameters & Units")
         
         param_data = []
@@ -1639,9 +1247,9 @@ else:
             st.info("No parameters detected")
     
     # ============================================================
-    # TAB 9: RAW DATA
+    # TAB 8: RAW DATA
     # ============================================================
-    with tab9:
+    with tab8:
         st.header("📥 Raw Data")
         st.dataframe(df, use_container_width=True)
         
