@@ -365,7 +365,6 @@ class PerformanceAnalyzer:
         # Equipment Hours Chart
         equip_cols = self.categorizer.get_all_columns_in_category('Dewatering - Equipment')
         if len(equip_cols) >= 3:
-            # Find run hour columns
             hour_cols = [col for col in equip_cols if 'hour' in col.lower() or 'runtime' in col.lower()]
             if len(hour_cols) >= 2:
                 charts.append({
@@ -569,11 +568,12 @@ else:
             poly_data = pd.to_numeric(df[poly_cols[0]], errors='coerce').dropna()
             if len(poly_data) > 0:
                 with col_dew1:
+                    delta_val = float(poly_data.iloc[-1] - poly_data.mean())
                     st.metric(
-                        f"Polymer Efficiency",
-                        f"{poly_data.mean():.2f}",
-                        f"lbs/ton",
-                        delta=f"{poly_data.iloc[-1] - poly_data.mean():+.2f}"
+                        "Polymer Efficiency",
+                        f"{poly_data.mean():.2f} lbs/ton",
+                        delta=delta_val,
+                        delta_color="inverse"
                     )
         
         cake_cols = categorizer.get_all_columns_in_category('Dewatering - Cake Quality')
@@ -581,11 +581,11 @@ else:
             cake_data = pd.to_numeric(df[cake_cols[0]], errors='coerce').dropna()
             if len(cake_data) > 0:
                 with col_dew2:
+                    delta_val = float(cake_data.iloc[-1] - cake_data.mean())
                     st.metric(
-                        f"Cake Quality",
-                        f"{cake_data.mean():.2f}",
-                        f"%",
-                        delta=f"{cake_data.iloc[-1] - cake_data.mean():+.2f}"
+                        "Cake Quality",
+                        f"{cake_data.mean():.2f}%",
+                        delta=delta_val
                     )
         
         sludge_cols = categorizer.get_all_columns_in_category('Dewatering - Sludge')
@@ -595,10 +595,9 @@ else:
             if len(truck_data) > 0:
                 with col_dew3:
                     st.metric(
-                        f"Avg Trucks/Day",
+                        "Avg Trucks/Day",
                         f"{truck_data.mean():.1f}",
-                        f"trucks",
-                        delta=f"${truck_data.mean() * 500 * 30:,.0f}/month"
+                        f"Est. ${truck_data.mean() * 500 * 30:,.0f}/month"
                     )
         
         st.divider()
@@ -612,11 +611,11 @@ else:
             thick_data = pd.to_numeric(df[thick_uf_cols[0]], errors='coerce').dropna()
             if len(thick_data) > 0:
                 with col_thick1:
+                    delta_val = float(thick_data.iloc[-1] - thick_data.mean())
                     st.metric(
-                        f"Underflow TS",
-                        f"{thick_data.mean():.2f}",
-                        f"% TS",
-                        delta=f"{thick_data.iloc[-1] - thick_data.mean():+.2f}"
+                        "Underflow TS",
+                        f"{thick_data.mean():.2f}% TS",
+                        delta=delta_val
                     )
         
         thick_of_cols = categorizer.get_all_columns_in_category('Thickening - Overflow')
@@ -624,11 +623,12 @@ else:
             thick_of_data = pd.to_numeric(df[thick_of_cols[0]], errors='coerce').dropna()
             if len(thick_of_data) > 0:
                 with col_thick2:
+                    delta_val = float(thick_of_data.iloc[-1] - thick_of_data.mean())
                     st.metric(
-                        f"Overflow TSS",
-                        f"{thick_of_data.mean():.0f}",
-                        f"mg/L",
-                        delta=f"{thick_of_data.iloc[-1] - thick_of_data.mean():+.0f}"
+                        "Overflow TSS",
+                        f"{thick_of_data.mean():.0f} mg/L",
+                        delta=delta_val,
+                        delta_color="inverse"
                     )
         
         st.divider()
@@ -643,9 +643,8 @@ else:
             if len(inf_data) > 0:
                 with col_flow1:
                     st.metric(
-                        f"Influent Flow",
-                        f"{inf_data.mean():.2f}",
-                        f"MGD"
+                        "Influent Flow",
+                        f"{inf_data.mean():.2f} MGD"
                     )
         
         eff_cols = categorizer.get_all_columns_in_category('Flow - Effluent')
@@ -654,9 +653,8 @@ else:
             if len(eff_data) > 0:
                 with col_flow2:
                     st.metric(
-                        f"Effluent Flow",
-                        f"{eff_data.mean():.2f}",
-                        f"MGD"
+                        "Effluent Flow",
+                        f"{eff_data.mean():.2f} MGD"
                     )
     
     # ============================================================
@@ -674,87 +672,91 @@ else:
             for i, chart_config in enumerate(charts):
                 st.subheader(f"{i+1}. {chart_config['name']}")
                 
-                if chart_config['type'] == 'line_with_ma':
-                    col_data = pd.to_numeric(df[chart_config['column']], errors='coerce')
-                    col_ma = col_data.rolling(window=7).mean()
+                try:
+                    if chart_config['type'] == 'line_with_ma':
+                        col_data = pd.to_numeric(df[chart_config['column']], errors='coerce')
+                        col_ma = col_data.rolling(window=7).mean()
+                        
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(x=df.index, y=col_data, mode='markers', name='Daily',
+                                                marker=dict(size=4, color='#1f4788', opacity=0.7)))
+                        fig.add_trace(go.Scatter(x=df.index, y=col_ma, mode='lines', name='7-day MA',
+                                                line=dict(color='#003d99', width=3)))
+                        
+                        if 'threshold_excellent' in chart_config:
+                            fig.add_hline(y=chart_config['threshold_excellent'], line_dash="dash", 
+                                         line_color="green", annotation_text="Excellent")
+                        if 'threshold_good' in chart_config:
+                            fig.add_hline(y=chart_config['threshold_good'], line_dash="dash", 
+                                         line_color="orange", annotation_text="Good")
+                        
+                        fig.update_layout(title=f"{chart_config['name']} ({chart_config['unit']})", 
+                                         height=400, hovermode='x unified')
+                        st.plotly_chart(fig, use_container_width=True)
                     
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=df.index, y=col_data, mode='markers', name='Daily',
-                                            marker=dict(size=4, color='#1f4788', opacity=0.7)))
-                    fig.add_trace(go.Scatter(x=df.index, y=col_ma, mode='lines', name='7-day MA',
-                                            line=dict(color='#003d99', width=3)))
+                    elif chart_config['type'] == 'line_with_ma_inverse':
+                        col_data = pd.to_numeric(df[chart_config['column']], errors='coerce')
+                        col_ma = col_data.rolling(window=7).mean()
+                        
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(x=df.index, y=col_data, mode='markers', name='Daily',
+                                                marker=dict(size=4, color='#8B0000', opacity=0.7)))
+                        fig.add_trace(go.Scatter(x=df.index, y=col_ma, mode='lines', name='7-day MA',
+                                                line=dict(color='#DC143C', width=3)))
+                        
+                        if 'threshold_excellent' in chart_config:
+                            fig.add_hline(y=chart_config['threshold_excellent'], line_dash="dash", 
+                                         line_color="green", annotation_text="Excellent")
+                        if 'threshold_good' in chart_config:
+                            fig.add_hline(y=chart_config['threshold_good'], line_dash="dash", 
+                                         line_color="orange", annotation_text="Good")
+                        
+                        fig.update_layout(title=f"{chart_config['name']} ({chart_config['unit']}) - Lower is Better", 
+                                         height=400, hovermode='x unified')
+                        st.plotly_chart(fig, use_container_width=True)
                     
-                    if 'threshold_excellent' in chart_config:
-                        fig.add_hline(y=chart_config['threshold_excellent'], line_dash="dash", 
-                                     line_color="green", annotation_text="Excellent")
-                    if 'threshold_good' in chart_config:
-                        fig.add_hline(y=chart_config['threshold_good'], line_dash="dash", 
-                                     line_color="orange", annotation_text="Good")
+                    elif chart_config['type'] == 'multi_line':
+                        fig = go.Figure()
+                        colors = ['#1f4788', '#FF8C00', '#228B22']
+                        for col, color in zip(chart_config['columns'], colors):
+                            col_data = pd.to_numeric(df[col], errors='coerce')
+                            fig.add_trace(go.Scatter(x=df.index, y=col_data, mode='lines', name=col,
+                                                    line=dict(width=3, color=color)))
+                        
+                        fig.update_layout(title=f"{chart_config['name']} ({chart_config['unit']})", 
+                                         height=400, hovermode='x unified')
+                        st.plotly_chart(fig, use_container_width=True)
                     
-                    fig.update_layout(title=f"{chart_config['name']} ({chart_config['unit']})", 
-                                     height=400, hovermode='x unified')
-                    st.plotly_chart(fig, use_container_width=True)
+                    elif chart_config['type'] == 'dual_line':
+                        col1_data = pd.to_numeric(df[chart_config['column1']], errors='coerce')
+                        col2_data = pd.to_numeric(df[chart_config['column2']], errors='coerce')
+                        
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(x=df.index, y=col1_data, mode='lines', name='Influent',
+                                                line=dict(color='#8B0000', width=3)))
+                        fig.add_trace(go.Scatter(x=df.index, y=col2_data, mode='lines', name='Effluent',
+                                                line=dict(color='#228B22', width=3)))
+                        
+                        fig.update_layout(title=f"{chart_config['name']} ({chart_config['unit']})", 
+                                         height=400, hovermode='x unified')
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    elif chart_config['type'] == 'bar_with_ma':
+                        col_data = pd.to_numeric(df[chart_config['column']], errors='coerce')
+                        col_ma = col_data.rolling(window=7).mean()
+                        
+                        fig = go.Figure()
+                        fig.add_trace(go.Bar(x=df.index, y=col_data, name='Daily', 
+                                            marker=dict(color='#4169E1', opacity=0.7)))
+                        fig.add_trace(go.Scatter(x=df.index, y=col_ma, mode='lines', name='7-day MA',
+                                                line=dict(color='#00008B', width=3)))
+                        
+                        fig.update_layout(title=f"{chart_config['name']} ({chart_config['unit']})", 
+                                         height=400, hovermode='x unified')
+                        st.plotly_chart(fig, use_container_width=True)
                 
-                elif chart_config['type'] == 'line_with_ma_inverse':
-                    col_data = pd.to_numeric(df[chart_config['column']], errors='coerce')
-                    col_ma = col_data.rolling(window=7).mean()
-                    
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=df.index, y=col_data, mode='markers', name='Daily',
-                                            marker=dict(size=4, color='#8B0000', opacity=0.7)))
-                    fig.add_trace(go.Scatter(x=df.index, y=col_ma, mode='lines', name='7-day MA',
-                                            line=dict(color='#DC143C', width=3)))
-                    
-                    if 'threshold_excellent' in chart_config:
-                        fig.add_hline(y=chart_config['threshold_excellent'], line_dash="dash", 
-                                     line_color="green", annotation_text="Excellent")
-                    if 'threshold_good' in chart_config:
-                        fig.add_hline(y=chart_config['threshold_good'], line_dash="dash", 
-                                     line_color="orange", annotation_text="Good")
-                    
-                    fig.update_layout(title=f"{chart_config['name']} ({chart_config['unit']}) - Lower is Better", 
-                                     height=400, hovermode='x unified')
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                elif chart_config['type'] == 'multi_line':
-                    fig = go.Figure()
-                    colors = ['#1f4788', '#FF8C00', '#228B22']
-                    for col, color in zip(chart_config['columns'], colors):
-                        col_data = pd.to_numeric(df[col], errors='coerce')
-                        fig.add_trace(go.Scatter(x=df.index, y=col_data, mode='lines', name=col,
-                                                line=dict(width=3, color=color)))
-                    
-                    fig.update_layout(title=f"{chart_config['name']} ({chart_config['unit']})", 
-                                     height=400, hovermode='x unified')
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                elif chart_config['type'] == 'dual_line':
-                    col1_data = pd.to_numeric(df[chart_config['column1']], errors='coerce')
-                    col2_data = pd.to_numeric(df[chart_config['column2']], errors='coerce')
-                    
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=df.index, y=col1_data, mode='lines', name='Influent',
-                                            line=dict(color='#8B0000', width=3)))
-                    fig.add_trace(go.Scatter(x=df.index, y=col2_data, mode='lines', name='Effluent',
-                                            line=dict(color='#228B22', width=3)))
-                    
-                    fig.update_layout(title=f"{chart_config['name']} ({chart_config['unit']})", 
-                                     height=400, hovermode='x unified')
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                elif chart_config['type'] == 'bar_with_ma':
-                    col_data = pd.to_numeric(df[chart_config['column']], errors='coerce')
-                    col_ma = col_data.rolling(window=7).mean()
-                    
-                    fig = go.Figure()
-                    fig.add_trace(go.Bar(x=df.index, y=col_data, name='Daily', 
-                                        marker=dict(color='#4169E1', opacity=0.7)))
-                    fig.add_trace(go.Scatter(x=df.index, y=col_ma, mode='lines', name='7-day MA',
-                                            line=dict(color='#00008B', width=3)))
-                    
-                    fig.update_layout(title=f"{chart_config['name']} ({chart_config['unit']})", 
-                                     height=400, hovermode='x unified')
-                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Could not create chart: {str(e)}")
                 
                 st.divider()
     
