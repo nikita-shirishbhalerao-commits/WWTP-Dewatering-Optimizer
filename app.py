@@ -84,6 +84,127 @@ PERFORMANCE_DESCRIPTIONS = {
 }
 
 # ============================================================
+# KPI DEFINITIONS
+# ============================================================
+DEWATERING_KPI_DEFINITIONS = {
+    'cake_solids': {
+        'name': 'Cake Solids Content (%)',
+        'description': 'Measures the dry solids percentage in dewatered biosolids',
+        'target': '18-25% (belt press), 20-30% (centrifuge)',
+        'unit': '%',
+        'keywords': ['cake', 'solids', 'cake %', 'cake quality', 'moisture']
+    },
+    'polymer_consumption': {
+        'name': 'Polymer Consumption (lbs/ton DS)',
+        'description': 'Tracks conditioning chemical usage per ton of dry solids',
+        'target': '5-15 lbs/ton DS',
+        'unit': 'lbs/ton',
+        'keywords': ['polymer', 'active poly', 'lbs per ton']
+    },
+    'dewatering_throughput': {
+        'name': 'Dewatering Throughput (lbs DS/day)',
+        'description': 'Daily dry solids processing capacity',
+        'target': 'Varies by equipment',
+        'unit': 'lbs/day',
+        'keywords': ['dry tons', 'dry']
+    },
+    'solids_recovery': {
+        'name': 'Solids Recovery Rate (%)',
+        'description': 'Percentage of incoming solids captured in cake',
+        'target': '>95%',
+        'unit': '%',
+        'keywords': ['recovery', 'capture']
+    },
+    'cake_production': {
+        'name': 'Cake Production Rate (lbs/hour)',
+        'description': 'Dewatered biosolids output',
+        'target': '500-2,000 lbs/hour',
+        'unit': 'lbs/hour',
+        'keywords': ['cake', 'production']
+    },
+    'polymer_cost_per_lb': {
+        'name': 'Polymer Cost per Pound of Solids ($/lb DS)',
+        'description': 'Economic indicator tracking chemical efficiency',
+        'target': '$0.05-$0.15/lb DS',
+        'unit': '$/lb',
+        'keywords': ['polymer cost', 'cost']
+    },
+    'cake_moisture': {
+        'name': 'Cake Moisture Content (%)',
+        'description': 'Inverse of solids content',
+        'target': '75-82%',
+        'unit': '%',
+        'keywords': ['moisture', 'cake']
+    },
+    'equipment_availability': {
+        'name': 'Dewatering Equipment Availability (%)',
+        'description': 'Uptime percentage of dewatering equipment',
+        'target': '>90%',
+        'unit': '%',
+        'keywords': ['availability', 'uptime', 'runtime']
+    }
+}
+
+THICKENING_KPI_DEFINITIONS = {
+    'thickened_solids': {
+        'name': 'Thickened Solids Concentration (%)',
+        'description': 'Dry solids percentage achieved',
+        'target': '4-8% (gravity), 6-12% (DAF)',
+        'unit': '%',
+        'keywords': ['underflow', 'concentration', 'ts']
+    },
+    'overflow_turbidity': {
+        'name': 'Overflow Turbidity (NTU)',
+        'description': 'Clarified supernatant quality',
+        'target': '<5 NTU',
+        'unit': 'NTU',
+        'keywords': ['overflow', 'tss', 'turbidity']
+    },
+    'thickening_throughput': {
+        'name': 'Thickening Throughput (lbs DS/day)',
+        'description': 'Daily solids processing capacity',
+        'target': 'Varies by equipment',
+        'unit': 'lbs/day',
+        'keywords': ['throughput', 'capacity']
+    },
+    'solids_capture_efficiency': {
+        'name': 'Solids Capture Efficiency (%)',
+        'description': 'Percentage of incoming solids retained',
+        'target': '>90%',
+        'unit': '%',
+        'keywords': ['capture', 'efficiency']
+    },
+    'underflow_production': {
+        'name': 'Underflow Production Rate (lbs/hour)',
+        'description': 'Thickened sludge output',
+        'target': '200-1,000 lbs/hour',
+        'unit': 'lbs/hour',
+        'keywords': ['underflow', 'production']
+    },
+    'overflow_flow': {
+        'name': 'Overflow Flow Rate (gpm)',
+        'description': 'Return liquor from thickening',
+        'target': 'Varies by equipment',
+        'unit': 'gpm',
+        'keywords': ['overflow', 'flow', 'gpm']
+    },
+    'solids_loading': {
+        'name': 'Solids Loading Rate (lbs DS/day/sq ft)',
+        'description': 'Thickener surface area efficiency',
+        'target': '0.5-2.0 lbs DS/day/sq ft',
+        'unit': 'lbs/day/sq ft',
+        'keywords': ['loading', 'rate']
+    },
+    'equipment_availability': {
+        'name': 'Thickening Equipment Availability (%)',
+        'description': 'Uptime percentage of thickening equipment',
+        'target': '>92%',
+        'unit': '%',
+        'keywords': ['availability', 'uptime']
+    }
+}
+
+# ============================================================
 # FUZZY PARAMETER DETECTOR CLASS
 # ============================================================
 class FuzzyParameterDetector:
@@ -185,6 +306,158 @@ class FuzzyParameterDetector:
         return 'Unknown'
 
 # ============================================================
+# KPI CALCULATOR CLASS
+# ============================================================
+class KPICalculator:
+    """Calculates meaningful KPIs from detected parameters"""
+    
+    def __init__(self, df, detected_params):
+        self.df = df
+        self.detected_params = detected_params
+    
+    def calculate_dewatering_kpis(self):
+        """Calculate dewatering KPIs"""
+        kpis = {}
+        
+        # Cake Solids Content
+        if self.detected_params.get('cake_quality', {}).get('column'):
+            cake_col = self.detected_params['cake_quality']['column']
+            cake_data = pd.to_numeric(self.df[cake_col], errors='coerce').dropna()
+            if len(cake_data) > 0:
+                kpis['cake_solids'] = {
+                    'value': cake_data.mean(),
+                    'unit': '%',
+                    'target': '20-30%',
+                    'status': self._get_status(cake_data.mean(), 20, 30)
+                }
+        
+        # Polymer Consumption
+        if self.detected_params.get('polymer', {}).get('column'):
+            poly_col = self.detected_params['polymer']['column']
+            poly_data = pd.to_numeric(self.df[poly_col], errors='coerce').dropna()
+            if len(poly_data) > 0:
+                kpis['polymer_consumption'] = {
+                    'value': poly_data.mean(),
+                    'unit': 'lbs/ton',
+                    'target': '5-15 lbs/ton',
+                    'status': self._get_status(poly_data.mean(), 5, 15)
+                }
+        
+        # Dewatering Throughput (Dry Tons/day)
+        if self.detected_params.get('dry_tons', {}).get('column'):
+            dry_col = self.detected_params['dry_tons']['column']
+            dry_data = pd.to_numeric(self.df[dry_col], errors='coerce').dropna()
+            if len(dry_data) > 0:
+                kpis['dewatering_throughput'] = {
+                    'value': dry_data.mean(),
+                    'unit': 'Dry Tons/day',
+                    'target': 'Varies',
+                    'status': '✅' if dry_data.mean() > 0 else '❌'
+                }
+        
+        # Cake Moisture Content (inverse of solids)
+        if self.detected_params.get('cake_quality', {}).get('column'):
+            cake_col = self.detected_params['cake_quality']['column']
+            cake_data = pd.to_numeric(self.df[cake_col], errors='coerce').dropna()
+            if len(cake_data) > 0:
+                moisture = 100 - cake_data.mean()
+                kpis['cake_moisture'] = {
+                    'value': moisture,
+                    'unit': '%',
+                    'target': '75-82%',
+                    'status': self._get_status(moisture, 75, 82)
+                }
+        
+        # Polymer Cost per Pound
+        if (self.detected_params.get('polymer_cost', {}).get('column') and 
+            self.detected_params.get('dry_tons', {}).get('column')):
+            cost_col = self.detected_params['polymer_cost']['column']
+            dry_col = self.detected_params['dry_tons']['column']
+            cost_data = pd.to_numeric(self.df[cost_col], errors='coerce')
+            dry_data = pd.to_numeric(self.df[dry_col], errors='coerce')
+            
+            if len(cost_data) > 0 and len(dry_data) > 0:
+                cost_per_lb = (cost_data / (dry_data * 2000)).mean()  # Convert tons to lbs
+                kpis['polymer_cost_per_lb'] = {
+                    'value': cost_per_lb,
+                    'unit': '$/lb',
+                    'target': '$0.05-$0.15/lb',
+                    'status': self._get_status(cost_per_lb, 0.05, 0.15)
+                }
+        
+        return kpis
+    
+    def calculate_thickening_kpis(self):
+        """Calculate thickening KPIs"""
+        kpis = {}
+        
+        # Thickened Solids Concentration
+        if self.detected_params.get('thickener_underflow', {}).get('column'):
+            uf_col = self.detected_params['thickener_underflow']['column']
+            uf_data = pd.to_numeric(self.df[uf_col], errors='coerce').dropna()
+            if len(uf_data) > 0:
+                kpis['thickened_solids'] = {
+                    'value': uf_data.mean(),
+                    'unit': '%',
+                    'target': '4-8%',
+                    'status': self._get_status(uf_data.mean(), 4, 8)
+                }
+        
+        # Overflow Turbidity
+        if self.detected_params.get('thickener_overflow', {}).get('column'):
+            of_col = self.detected_params['thickener_overflow']['column']
+            of_data = pd.to_numeric(self.df[of_col], errors='coerce').dropna()
+            if len(of_data) > 0:
+                kpis['overflow_turbidity'] = {
+                    'value': of_data.mean(),
+                    'unit': 'mg/L',
+                    'target': '<500 mg/L',
+                    'status': self._get_status_inverse(of_data.mean(), 500)
+                }
+        
+        # GBT Underflow
+        if self.detected_params.get('gbt_underflow', {}).get('column'):
+            gbt_uf_col = self.detected_params['gbt_underflow']['column']
+            gbt_uf_data = pd.to_numeric(self.df[gbt_uf_col], errors='coerce').dropna()
+            if len(gbt_uf_data) > 0:
+                kpis['gbt_underflow'] = {
+                    'value': gbt_uf_data.mean(),
+                    'unit': '%',
+                    'target': '6-12%',
+                    'status': self._get_status(gbt_uf_data.mean(), 6, 12)
+                }
+        
+        # GBT Overflow
+        if self.detected_params.get('gbt_overflow', {}).get('column'):
+            gbt_of_col = self.detected_params['gbt_overflow']['column']
+            gbt_of_data = pd.to_numeric(self.df[gbt_of_col], errors='coerce').dropna()
+            if len(gbt_of_data) > 0:
+                kpis['gbt_overflow'] = {
+                    'value': gbt_of_data.mean(),
+                    'unit': 'mg/L',
+                    'target': '<300 mg/L',
+                    'status': self._get_status_inverse(gbt_of_data.mean(), 300)
+                }
+        
+        return kpis
+    
+    def _get_status(self, value, min_target, max_target):
+        """Get status based on target range"""
+        if min_target <= value <= max_target:
+            return '✅ On Target'
+        elif value < min_target:
+            return '🔴 Below Target'
+        else:
+            return '🟠 Above Target'
+    
+    def _get_status_inverse(self, value, max_target):
+        """Get status for inverse metrics (lower is better)"""
+        if value <= max_target:
+            return '✅ On Target'
+        else:
+            return '🟠 Above Target'
+
+# ============================================================
 # PERFORMANCE ANALYZER CLASS
 # ============================================================
 class PerformanceAnalyzer:
@@ -206,20 +479,6 @@ class PerformanceAnalyzer:
                 return rating
         return 'poor'
     
-    def calculate_yoy_change(self, current_data, previous_data):
-        """Calculate year-over-year change"""
-        if len(previous_data) == 0:
-            return None
-        
-        current_mean = current_data.mean()
-        previous_mean = previous_data.mean()
-        
-        if previous_mean == 0:
-            return None
-        
-        change_pct = ((current_mean - previous_mean) / previous_mean) * 100
-        return change_pct
-    
     def generate_recommendations(self):
         """Generate AI-based recommendations"""
         recommendations = []
@@ -235,7 +494,7 @@ class PerformanceAnalyzer:
                 rating = self.get_performance_rating('polymer', poly_avg)
                 
                 if rating == 'poor':
-                    annual_cost = poly_avg * 50 * 365  # $50 per lb
+                    annual_cost = poly_avg * 50 * 365
                     target_cost = 12 * 50 * 365
                     potential_savings = annual_cost - target_cost
                     
@@ -317,8 +576,7 @@ class PerformanceAnalyzer:
                 rating = self.get_performance_rating('cake_quality', cake_avg)
                 
                 if rating == 'poor':
-                    # Estimate truck reduction
-                    current_trucks = 100  # baseline
+                    current_trucks = 100
                     target_trucks = 60
                     truck_savings = (current_trucks - target_trucks) * 500 * 365
                     
@@ -713,6 +971,7 @@ else:
     
     # Initialize analyzers
     analyzer = PerformanceAnalyzer(df, detected_params, plant_info)
+    kpi_calculator = KPICalculator(df, detected_params)
     chart_renderer = ChartRenderer(df)
     
     # Create tabs
@@ -728,7 +987,7 @@ else:
     ])
     
     # ============================================================
-    # TAB 1: ENHANCED DASHBOARD
+    # TAB 1: ENHANCED DASHBOARD WITH KPIs
     # ============================================================
     with tab1:
         st.header(f"📊 Performance Dashboard - {plant_info.get('name', 'WWTP')}")
@@ -736,158 +995,55 @@ else:
         if plant_info.get('location'):
             st.caption(f"📍 {plant_info['location']} | Capacity: {plant_info.get('capacity', 'N/A')} MGD")
         
-        # Dewatering Performance
-        st.subheader("🔄 Dewatering Performance")
+        # ============================================================
+        # DEWATERING KPIs
+        # ============================================================
+        st.subheader("🔄 Dewatering KPIs")
         
-        dew_col1, dew_col2, dew_col3, dew_col4 = st.columns(4)
+        dew_kpis = kpi_calculator.calculate_dewatering_kpis()
         
-        if detected_params.get('polymer', {}).get('column'):
-            poly_col = detected_params['polymer']['column']
-            poly_unit = detected_params['polymer']['unit']
-            poly_data = pd.to_numeric(df[poly_col], errors='coerce').dropna()
-            
-            if len(poly_data) > 0:
-                poly_avg = poly_data.mean()
-                poly_rating = analyzer.get_performance_rating('polymer', poly_avg)
-                
-                with dew_col1:
+        if dew_kpis:
+            kpi_cols = st.columns(len(dew_kpis))
+            for idx, (kpi_key, kpi_value) in enumerate(dew_kpis.items()):
+                with kpi_cols[idx]:
                     st.metric(
-                        f"Polymer Efficiency ({poly_unit})",
-                        f"{poly_avg:.2f}",
-                        f"{poly_data.iloc[-1] - poly_avg:+.2f}",
-                        delta_color="inverse"
+                        DEWATERING_KPI_DEFINITIONS[kpi_key]['name'],
+                        f"{kpi_value['value']:.2f} {kpi_value['unit']}",
+                        help=DEWATERING_KPI_DEFINITIONS[kpi_key]['description']
                     )
-                    st.caption(PERFORMANCE_DESCRIPTIONS[poly_rating])
-        
-        if detected_params.get('cake_quality', {}).get('column'):
-            cake_col = detected_params['cake_quality']['column']
-            cake_unit = detected_params['cake_quality']['unit']
-            cake_data = pd.to_numeric(df[cake_col], errors='coerce').dropna()
-            
-            if len(cake_data) > 0:
-                cake_avg = cake_data.mean()
-                cake_rating = analyzer.get_performance_rating('cake_quality', cake_avg)
-                
-                with dew_col2:
-                    st.metric(
-                        f"Cake Quality ({cake_unit})",
-                        f"{cake_avg:.2f}",
-                        f"{cake_data.iloc[-1] - cake_avg:+.2f}"
-                    )
-                    st.caption(PERFORMANCE_DESCRIPTIONS[cake_rating])
-        
-        if detected_params.get('dry_tons', {}).get('column') and detected_params.get('wet_tons', {}).get('column'):
-            dry_col = detected_params['dry_tons']['column']
-            wet_col = detected_params['wet_tons']['column']
-            dry_data = pd.to_numeric(df[dry_col], errors='coerce')
-            wet_data = pd.to_numeric(df[wet_col], errors='coerce')
-            ratio = (dry_data / wet_data).mean()
-            ratio_rating = analyzer.get_performance_rating('dry_wet_ratio', ratio)
-            
-            with dew_col3:
-                st.metric("Dry/Wet Ratio", f"{ratio:.3f}")
-                st.caption(PERFORMANCE_DESCRIPTIONS[ratio_rating])
-        
-        if detected_params.get('trucks', {}).get('column'):
-            truck_col = detected_params['trucks']['column']
-            truck_unit = detected_params['trucks']['unit']
-            truck_data = pd.to_numeric(df[truck_col], errors='coerce').dropna()
-            
-            if len(truck_data) > 0:
-                with dew_col4:
-                    st.metric(
-                        f"Avg Trucks/Day ({truck_unit})",
-                        f"{truck_data.mean():.1f}",
-                        f"Est. ${truck_data.mean() * 500 * 30:,.0f}/month"
-                    )
+                    st.caption(f"Target: {kpi_value['target']}")
+                    st.write(kpi_value['status'])
+        else:
+            st.info("No dewatering data detected")
         
         st.divider()
         
-        # Thickening Performance
-        st.subheader("🌀 Thickening Performance")
+        # ============================================================
+        # THICKENING KPIs
+        # ============================================================
+        st.subheader("🌀 Thickening KPIs")
         
-        thick_col1, thick_col2, thick_col3 = st.columns(3)
+        thick_kpis = kpi_calculator.calculate_thickening_kpis()
         
-        if detected_params.get('thickener_underflow', {}).get('column'):
-            uf_col = detected_params['thickener_underflow']['column']
-            uf_unit = detected_params['thickener_underflow']['unit']
-            uf_data = pd.to_numeric(df[uf_col], errors='coerce').dropna()
-            
-            if len(uf_data) > 0:
-                uf_avg = uf_data.mean()
-                uf_rating = analyzer.get_performance_rating('thickener_underflow', uf_avg)
-                
-                with thick_col1:
-                    st.metric(f"Underflow Conc. ({uf_unit})", f"{uf_avg:.2f}")
-                    st.caption(PERFORMANCE_DESCRIPTIONS[uf_rating])
-        
-        if detected_params.get('thickener_overflow', {}).get('column'):
-            of_col = detected_params['thickener_overflow']['column']
-            of_unit = detected_params['thickener_overflow']['unit']
-            of_data = pd.to_numeric(df[of_col], errors='coerce').dropna()
-            
-            if len(of_data) > 0:
-                of_avg = of_data.mean()
-                of_rating = analyzer.get_performance_rating('thickener_overflow', of_avg)
-                
-                with thick_col2:
-                    st.metric(f"Overflow TSS ({of_unit})", f"{of_avg:.0f}")
-                    st.caption(PERFORMANCE_DESCRIPTIONS[of_rating])
-        
-        if detected_params.get('thickener_feed', {}).get('column'):
-            feed_col = detected_params['thickener_feed']['column']
-            feed_unit = detected_params['thickener_feed']['unit']
-            feed_data = pd.to_numeric(df[feed_col], errors='coerce').dropna()
-            
-            if len(feed_data) > 0:
-                with thick_col3:
-                    st.metric(f"Feed Rate ({feed_unit})", f"{feed_data.mean():.2f}")
+        if thick_kpis:
+            kpi_cols = st.columns(len(thick_kpis))
+            for idx, (kpi_key, kpi_value) in enumerate(thick_kpis.items()):
+                with kpi_cols[idx]:
+                    st.metric(
+                        THICKENING_KPI_DEFINITIONS[kpi_key]['name'],
+                        f"{kpi_value['value']:.2f} {kpi_value['unit']}",
+                        help=THICKENING_KPI_DEFINITIONS[kpi_key]['description']
+                    )
+                    st.caption(f"Target: {kpi_value['target']}")
+                    st.write(kpi_value['status'])
+        else:
+            st.info("No thickening data detected")
         
         st.divider()
         
-        # GBT Performance
-        st.subheader("🎯 GBT (Gravity Belt Thickener) Performance")
-        
-        gbt_col1, gbt_col2, gbt_col3 = st.columns(3)
-        
-        if detected_params.get('gbt_underflow', {}).get('column'):
-            gbt_uf_col = detected_params['gbt_underflow']['column']
-            gbt_uf_unit = detected_params['gbt_underflow']['unit']
-            gbt_uf_data = pd.to_numeric(df[gbt_uf_col], errors='coerce').dropna()
-            
-            if len(gbt_uf_data) > 0:
-                gbt_uf_avg = gbt_uf_data.mean()
-                gbt_uf_rating = analyzer.get_performance_rating('gbt_underflow', gbt_uf_avg)
-                
-                with gbt_col1:
-                    st.metric(f"GBT Underflow ({gbt_uf_unit})", f"{gbt_uf_avg:.2f}")
-                    st.caption(PERFORMANCE_DESCRIPTIONS[gbt_uf_rating])
-        
-        if detected_params.get('gbt_overflow', {}).get('column'):
-            gbt_of_col = detected_params['gbt_overflow']['column']
-            gbt_of_unit = detected_params['gbt_overflow']['unit']
-            gbt_of_data = pd.to_numeric(df[gbt_of_col], errors='coerce').dropna()
-            
-            if len(gbt_of_data) > 0:
-                gbt_of_avg = gbt_of_data.mean()
-                gbt_of_rating = analyzer.get_performance_rating('gbt_overflow', gbt_of_avg)
-                
-                with gbt_col2:
-                    st.metric(f"GBT Overflow ({gbt_of_unit})", f"{gbt_of_avg:.0f}")
-                    st.caption(PERFORMANCE_DESCRIPTIONS[gbt_of_rating])
-        
-        if detected_params.get('gbt_belt_speed', {}).get('column'):
-            gbt_speed_col = detected_params['gbt_belt_speed']['column']
-            gbt_speed_unit = detected_params['gbt_belt_speed']['unit']
-            gbt_speed_data = pd.to_numeric(df[gbt_speed_col], errors='coerce').dropna()
-            
-            if len(gbt_speed_data) > 0:
-                with gbt_col3:
-                    st.metric(f"GBT Belt Speed ({gbt_speed_unit})", f"{gbt_speed_data.mean():.2f}")
-        
-        st.divider()
-        
-        # Flow Data
+        # ============================================================
+        # FLOW DATA
+        # ============================================================
         st.subheader("💧 Flow Data")
         
         flow_col1, flow_col2 = st.columns(2)
@@ -966,7 +1122,7 @@ else:
                 st.divider()
     
     # ============================================================
-    # TAB 3: YOY ANALYSIS
+    # TAB 3: YOY ANALYSIS - FIXED
     # ============================================================
     with tab3:
         st.header("📈 Year-over-Year Analysis")
@@ -999,7 +1155,7 @@ else:
             with col_select3:
                 comparison_type = st.selectbox(
                     "Comparison Type",
-                    ["YOY (Year-over-Year)", "Month-over-Month", "Custom Period"]
+                    ["Full Timeline", "Custom Period"]
                 )
             
             # Prepare data
@@ -1009,70 +1165,81 @@ else:
             df_yoy = df_yoy.dropna()
             
             if len(df_yoy) > 0:
-                # Aggregate data
-                if aggregation == "Daily":
-                    df_agg = df_yoy.set_index(date_col).resample('D')[selected_column].mean()
-                elif aggregation == "Weekly":
-                    df_agg = df_yoy.set_index(date_col).resample('W')[selected_column].mean()
-                elif aggregation == "Monthly":
-                    df_agg = df_yoy.set_index(date_col).resample('M')[selected_column].mean()
-                else:  # Quarterly
-                    df_agg = df_yoy.set_index(date_col).resample('Q')[selected_column].mean()
+                # Aggregate data - FIXED
+                try:
+                    if aggregation == "Daily":
+                        df_agg = df_yoy.set_index(date_col)[selected_column].resample('D').mean()
+                    elif aggregation == "Weekly":
+                        df_agg = df_yoy.set_index(date_col)[selected_column].resample('W').mean()
+                    elif aggregation == "Monthly":
+                        df_agg = df_yoy.set_index(date_col)[selected_column].resample('MS').mean()
+                    else:  # Quarterly
+                        df_agg = df_yoy.set_index(date_col)[selected_column].resample('QS').mean()
+                    
+                    df_agg = df_agg.dropna()
+                    
+                    if len(df_agg) > 0:
+                        # Create chart
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(
+                            x=df_agg.index,
+                            y=df_agg.values,
+                            mode='lines+markers',
+                            name=selected_column,
+                            line=dict(color='#1f77b4', width=2),
+                            marker=dict(size=8)
+                        ))
+                        
+                        # Add trend line
+                        x_numeric = np.arange(len(df_agg))
+                        if len(x_numeric) > 1:
+                            z = np.polyfit(x_numeric, df_agg.values, 1)
+                            p = np.poly1d(z)
+                            fig.add_trace(go.Scatter(
+                                x=df_agg.index,
+                                y=p(x_numeric),
+                                mode='lines',
+                                name='Trend',
+                                line=dict(color='red', width=2, dash='dash')
+                            ))
+                        
+                        fig.update_layout(
+                            title=f"{selected_column} - {aggregation} Aggregation",
+                            xaxis_title="Date",
+                            yaxis_title=numeric_cols[selected_column],
+                            height=500,
+                            hovermode='x unified'
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Statistics
+                        st.subheader("📊 Statistics")
+                        
+                        stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
+                        
+                        with stat_col1:
+                            st.metric("Mean", f"{df_agg.mean():.2f}")
+                        
+                        with stat_col2:
+                            st.metric("Median", f"{df_agg.median():.2f}")
+                        
+                        with stat_col3:
+                            st.metric("Min", f"{df_agg.min():.2f}")
+                        
+                        with stat_col4:
+                            st.metric("Max", f"{df_agg.max():.2f}")
+                        
+                        # Trend analysis
+                        if len(x_numeric) > 1:
+                            slope = z[0]
+                            trend_direction = "📈 Increasing" if slope > 0 else "📉 Decreasing"
+                            st.write(f"**Trend:** {trend_direction} (slope: {slope:.4f})")
+                    else:
+                        st.warning("No data available after aggregation")
                 
-                # Create chart
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=df_agg.index,
-                    y=df_agg.values,
-                    mode='lines+markers',
-                    name=selected_column,
-                    line=dict(color='#1f77b4', width=2),
-                    marker=dict(size=8)
-                ))
-                
-                # Add trend line
-                x_numeric = np.arange(len(df_agg))
-                z = np.polyfit(x_numeric, df_agg.values, 1)
-                p = np.poly1d(z)
-                fig.add_trace(go.Scatter(
-                    x=df_agg.index,
-                    y=p(x_numeric),
-                    mode='lines',
-                    name='Trend',
-                    line=dict(color='red', width=2, dash='dash')
-                ))
-                
-                fig.update_layout(
-                    title=f"{selected_column} - {aggregation} Aggregation",
-                    xaxis_title="Date",
-                    yaxis_title=numeric_cols[selected_column],
-                    height=500,
-                    hovermode='x unified'
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Statistics
-                st.subheader("📊 Statistics")
-                
-                stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
-                
-                with stat_col1:
-                    st.metric("Mean", f"{df_agg.mean():.2f}")
-                
-                with stat_col2:
-                    st.metric("Median", f"{df_agg.median():.2f}")
-                
-                with stat_col3:
-                    st.metric("Min", f"{df_agg.min():.2f}")
-                
-                with stat_col4:
-                    st.metric("Max", f"{df_agg.max():.2f}")
-                
-                # Trend analysis
-                slope = z[0]
-                trend_direction = "📈 Increasing" if slope > 0 else "📉 Decreasing"
-                st.write(f"**Trend:** {trend_direction} (slope: {slope:.4f})")
+                except Exception as e:
+                    st.error(f"Error processing data: {str(e)}")
     
     # ============================================================
     # TAB 4: DEWATERING
