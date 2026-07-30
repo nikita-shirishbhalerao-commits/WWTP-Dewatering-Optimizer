@@ -156,37 +156,43 @@ class PerformanceAnalyzer:
                 'Excellent': '< 12 lbs/ton',
                 'Good': '12-15 lbs/ton',
                 'Poor': '> 15 lbs/ton',
-                'Rationale': 'Lower polymer use = better efficiency and cost savings'
+                'Rationale': 'Lower polymer use = better efficiency and cost savings. Based on industry best practices for centrifuge dewatering.',
+                'Data Source': 'Active Polymer per Dry Ton metric'
             },
             'Cake Quality': {
                 'Excellent': '> 25% solids',
                 'Good': '20-25% solids',
                 'Poor': '< 20% solids',
-                'Rationale': 'Higher solids = better dewatering, fewer trucks needed'
+                'Rationale': 'Higher solids = better dewatering, fewer trucks needed. Typical municipal WWTP targets 22-28%.',
+                'Data Source': 'Centrifuge Cake Average % metric'
             },
             'Equipment Utilization': {
                 'Optimal': '40-70%',
                 'Underutilized': '< 40%',
                 'Overutilized': '> 70%',
-                'Rationale': 'Balanced utilization prevents equipment wear and maintains capacity'
+                'Rationale': 'Balanced utilization prevents equipment wear, maintains capacity, and allows for maintenance. Based on 24-hour operation potential.',
+                'Data Source': 'Average of Centrifuge 1, 2, 3 Run Hours'
             },
             'Dry/Wet Ratio': {
                 'Excellent': '> 0.25',
                 'Good': '0.20-0.25',
                 'Poor': '< 0.20',
-                'Rationale': 'Higher ratio indicates better sludge dewatering'
+                'Rationale': 'Higher ratio indicates better sludge dewatering efficiency. Typical range 0.22-0.30 for well-operated facilities.',
+                'Data Source': 'Dry Tons / Wet Tons calculation'
             },
             'Flow Balance': {
                 'Normal': '< 15% difference',
                 'Investigate': '15-25% difference',
                 'Critical': '> 25% difference',
-                'Rationale': 'Large differences may indicate treatment delays or storage issues'
+                'Rationale': 'Large differences may indicate treatment delays, storage issues, or measurement errors. Typical evaporation 5-10%.',
+                'Data Source': '(Influent - Effluent) / Influent × 100'
             },
             'Truck Hauling': {
                 'Excellent': '< 50 trucks/month',
                 'Good': '50-100 trucks/month',
                 'Poor': '> 100 trucks/month',
-                'Rationale': 'Fewer trucks = lower costs and better cake quality'
+                'Rationale': 'Fewer trucks = lower costs (~$500/load) and better cake quality. Assumes 20-25 ton capacity per truck.',
+                'Data Source': 'Daily Sludge Trucks metric'
             }
         }
     
@@ -223,7 +229,15 @@ class PerformanceAnalyzer:
                     ],
                     'expected_savings': f'${savings:,.0f}/year',
                     'timeline': '1-2 weeks',
-                    'risk': 'High - May affect cake quality initially'
+                    'risk': 'High - May affect cake quality initially',
+                    'additional_data': [
+                        'Polymer viscosity and age',
+                        'Sludge solids concentration (% TS)',
+                        'Sludge volatile solids content',
+                        'Centrifuge bowl speed (RPM)',
+                        'Feed rate (GPM)',
+                        'Differential scroll speed'
+                    ]
                 })
             elif poly_avg > 15:
                 savings = (poly_avg - 12) * 50 * 365
@@ -243,7 +257,13 @@ class PerformanceAnalyzer:
                     ],
                     'expected_savings': f'${savings:,.0f}/year',
                     'timeline': '2-4 weeks',
-                    'risk': 'Medium - Monitor cake quality'
+                    'risk': 'Medium - Monitor cake quality',
+                    'additional_data': [
+                        'Polymer type and concentration',
+                        'Jar test results',
+                        'Centrifuge performance curves',
+                        'Historical polymer usage data'
+                    ]
                 })
             
             if poly_current > poly_avg * 1.3:
@@ -265,7 +285,13 @@ class PerformanceAnalyzer:
                     ],
                     'expected_savings': 'Prevent future spikes',
                     'timeline': 'Immediate',
-                    'risk': 'Low - Investigation only'
+                    'risk': 'Low - Investigation only',
+                    'additional_data': [
+                        'Influent wastewater characteristics',
+                        'Treatment process changes',
+                        'Centrifuge maintenance records',
+                        'Operator shift notes'
+                    ]
                 })
         
         # Cake Quality Analysis
@@ -275,7 +301,7 @@ class PerformanceAnalyzer:
             cake_current = cake_data.iloc[-1]
             
             if cake_avg < 18:
-                truck_savings = 50 * 365 * 500  # Estimated
+                truck_savings = 50 * 365 * 500
                 recommendations.append({
                     'priority': '🔴 CRITICAL',
                     'category': 'Cake Quality',
@@ -296,7 +322,13 @@ class PerformanceAnalyzer:
                     ],
                     'expected_savings': f'${truck_savings:,.0f}/year (truck reduction)',
                     'timeline': '1-2 weeks',
-                    'risk': 'Low - Improves operation'
+                    'risk': 'Low - Improves operation',
+                    'additional_data': [
+                        'Centrifuge bowl condition assessment',
+                        'Scroll wear measurements',
+                        'Bearing condition',
+                        'Seal integrity'
+                    ]
                 })
             elif cake_avg < 22:
                 recommendations.append({
@@ -315,7 +347,12 @@ class PerformanceAnalyzer:
                     ],
                     'expected_savings': 'Reduce truck hauling costs',
                     'timeline': '2-4 weeks',
-                    'risk': 'Low'
+                    'risk': 'Low',
+                    'additional_data': [
+                        'Cake moisture content (%)',
+                        'Cake density measurements',
+                        'Polymer residual in filtrate'
+                    ]
                 })
         
         # Equipment Utilization
@@ -326,7 +363,7 @@ class PerformanceAnalyzer:
             avg_util = ((c1 + c2 + c3) / 3 / 24) * 100
             
             if avg_util < 25:
-                maintenance_savings = 15000 * 0.3  # 30% reduction
+                maintenance_savings = 15000 * 0.3
                 recommendations.append({
                     'priority': '🟢 LOW',
                     'category': 'Equipment Utilization',
@@ -343,7 +380,13 @@ class PerformanceAnalyzer:
                     ],
                     'expected_savings': f'${maintenance_savings:,.0f}/year',
                     'timeline': '3-6 months',
-                    'risk': 'Medium - Requires capital planning'
+                    'risk': 'Medium - Requires capital planning',
+                    'additional_data': [
+                        'Equipment age and condition',
+                        'Maintenance cost history',
+                        'Peak vs average sludge production',
+                        'Redundancy requirements'
+                    ]
                 })
             elif avg_util > 85:
                 recommendations.append({
@@ -363,7 +406,13 @@ class PerformanceAnalyzer:
                     ],
                     'expected_savings': 'Prevent equipment failure and downtime',
                     'timeline': '2-6 months',
-                    'risk': 'High - Equipment failure risk'
+                    'risk': 'High - Equipment failure risk',
+                    'additional_data': [
+                        'Equipment failure history',
+                        'Maintenance downtime records',
+                        'Peak sludge production rates',
+                        'Capacity expansion costs'
+                    ]
                 })
         
         # Truck Hauling Analysis
@@ -389,7 +438,13 @@ class PerformanceAnalyzer:
                     ],
                     'expected_savings': f'${truck_cost_savings:,.0f}/year',
                     'timeline': '1-4 weeks',
-                    'risk': 'Low'
+                    'risk': 'Low',
+                    'additional_data': [
+                        'Truck capacity and load weights',
+                        'Disposal site distance and costs',
+                        'Alternative disposal methods',
+                        'Sludge end-use options'
+                    ]
                 })
         
         return recommendations if recommendations else [{
@@ -400,14 +455,14 @@ class PerformanceAnalyzer:
             'actions': ['Continue current operations', 'Monitor key metrics'],
             'expected_savings': 'Maintain current efficiency',
             'timeline': 'Ongoing',
-            'risk': 'Low'
+            'risk': 'Low',
+            'additional_data': ['Continue regular monitoring', 'Maintain preventive maintenance schedule']
         }]
     
     def generate_ai_charts(self):
         """AI decides which charts to generate based on data"""
         charts = []
         
-        # Always include these
         if self.found_columns['polymer'] and self.found_columns['polymer'] in self.df.columns:
             charts.append({
                 'name': 'Polymer Efficiency Trend',
@@ -415,7 +470,11 @@ class PerformanceAnalyzer:
                 'column': self.found_columns['polymer'],
                 'title': 'Polymer Efficiency (lbs/ton)',
                 'threshold_good': 15,
-                'threshold_excellent': 12
+                'threshold_excellent': 12,
+                'threshold_labels': {
+                    12: 'Excellent (<12)',
+                    15: 'Good (12-15)'
+                }
             })
         
         if self.found_columns['cake'] and self.found_columns['cake'] in self.df.columns:
@@ -425,10 +484,13 @@ class PerformanceAnalyzer:
                 'column': self.found_columns['cake'],
                 'title': 'Cake Solids %',
                 'threshold_good': 20,
-                'threshold_excellent': 25
+                'threshold_excellent': 25,
+                'threshold_labels': {
+                    25: 'Excellent (>25%)',
+                    20: 'Good (20-25%)'
+                }
             })
         
-        # Conditional charts based on data availability
         if all(self.found_columns[k] and self.found_columns[k] in self.df.columns for k in ['c1_hours', 'c2_hours', 'c3_hours']):
             charts.append({
                 'name': 'Equipment Utilization',
@@ -458,7 +520,11 @@ class PerformanceAnalyzer:
                     'column1': self.found_columns['dry_tons'],
                     'column2': self.found_columns['wet_tons'],
                     'title': 'Dry/Wet Ton Ratio',
-                    'threshold': 0.25
+                    'threshold': 0.25,
+                    'threshold_labels': {
+                        0.25: 'Excellent (>0.25)',
+                        0.20: 'Good (0.20-0.25)'
+                    }
                 })
         
         if self.found_columns['trucks'] and self.found_columns['trucks'] in self.df.columns:
@@ -512,12 +578,12 @@ if uploaded_file is None:
     
     ### ✨ What the AI Does:
     - 🔍 **Auto-detects** your columns
-    - 📊 **Generates AI-selected charts**
-    - 💡 **Detailed recommendations** with root causes
+    - 📊 **Generates AI-selected charts** with threshold explanations
+    - 💡 **Detailed recommendations** with root causes and additional data needs
     - 🔎 **Data quality checks** with outlier detection
     - 📋 **Lists all assumptions** used in analysis
+    - 📈 **Relationship charts** showing correlations
     - 💰 **Calculates potential savings**
-    - 📈 **Visualizes trends**
     
     ### 🚀 Ready? Upload your file!
     """)
@@ -570,9 +636,10 @@ else:
     quality_checker = DataQualityChecker(df)
     
     # Create tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "📈 Dashboard",
         "📊 AI-Generated Charts",
+        "🔗 Relationship Analysis",
         "💡 Detailed Recommendations",
         "🔍 Data Quality",
         "📋 Assumptions",
@@ -598,11 +665,11 @@ else:
                 with col1:
                     st.metric("Polymer Efficiency", f"{avg_poly:.2f} lbs/ton", f"{delta:+.2f}", delta_color="inverse")
                     if avg_poly < 12:
-                        st.success("✅ Excellent")
+                        st.success("✅ Excellent (<12)")
                     elif avg_poly < 15:
-                        st.warning("⚠️ Good")
+                        st.warning("⚠️ Good (12-15)")
                     else:
-                        st.error("❌ Needs Work")
+                        st.error("❌ Needs Work (>15)")
         
         if found_columns['cake'] and found_columns['cake'] in df.columns:
             cake_data = pd.to_numeric(df[found_columns['cake']], errors='coerce').dropna()
@@ -614,11 +681,11 @@ else:
                 with col2:
                     st.metric("Cake Quality", f"{avg_cake:.2f}%", f"{delta:+.2f}%")
                     if avg_cake > 25:
-                        st.success("✅ Excellent")
+                        st.success("✅ Excellent (>25%)")
                     elif avg_cake > 20:
-                        st.warning("⚠️ Good")
+                        st.warning("⚠️ Good (20-25%)")
                     else:
-                        st.error("❌ Needs Work")
+                        st.error("❌ Needs Work (<20%)")
         
         if all(found_columns[k] and found_columns[k] in df.columns for k in ['c1_hours', 'c2_hours', 'c3_hours']):
             c1 = pd.to_numeric(df[found_columns['c1_hours']], errors='coerce').mean()
@@ -629,9 +696,11 @@ else:
             with col3:
                 st.metric("Equipment Util.", f"{avg_util:.1f}%")
                 if 30 < avg_util < 80:
-                    st.success("✅ Optimal")
+                    st.success("✅ Optimal (40-70%)")
+                elif avg_util < 40:
+                    st.warning("⚠️ Underutilized (<40%)")
                 else:
-                    st.warning("⚠️ Adjust")
+                    st.error("❌ Overutilized (>70%)")
         
         if found_columns['dry_tons'] and found_columns['wet_tons']:
             if found_columns['dry_tons'] in df.columns and found_columns['wet_tons'] in df.columns:
@@ -642,9 +711,11 @@ else:
                 with col4:
                     st.metric("Dry/Wet Ratio", f"{ratio:.3f}")
                     if ratio > 0.25:
-                        st.success("✅ Excellent")
+                        st.success("✅ Excellent (>0.25)")
+                    elif ratio > 0.20:
+                        st.warning("⚠️ Good (0.20-0.25)")
                     else:
-                        st.warning("⚠️ Good")
+                        st.error("❌ Poor (<0.20)")
         
         if found_columns['trucks'] and found_columns['trucks'] in df.columns:
             trucks = pd.to_numeric(df[found_columns['trucks']], errors='coerce').dropna()
@@ -662,7 +733,12 @@ else:
                 
                 with col6:
                     st.metric("Flow Diff", f"{diff:.1f}%")
-                    st.write("Evaporation")
+                    if diff < 15:
+                        st.success("✅ Normal (<15%)")
+                    elif diff < 25:
+                        st.warning("⚠️ Investigate (15-25%)")
+                    else:
+                        st.error("❌ Critical (>25%)")
         
         st.divider()
         
@@ -692,7 +768,7 @@ else:
     # ============================================================
     with tab2:
         st.header("📊 AI-Selected Performance Charts")
-        st.write("*Charts automatically selected based on your data*")
+        st.write("*Charts automatically selected based on your data with threshold explanations*")
         
         charts = analyzer.generate_ai_charts()
         
@@ -710,18 +786,27 @@ else:
                                         line=dict(color='darkblue', width=2)))
                 
                 if 'threshold_excellent' in chart_config:
-                    fig.add_hline(y=chart_config['threshold_excellent'], line_dash="dash", line_color="green")
+                    fig.add_hline(y=chart_config['threshold_excellent'], line_dash="dash", 
+                                 line_color="green", annotation_text=chart_config['threshold_labels'].get(chart_config['threshold_excellent'], ''))
                 if 'threshold_good' in chart_config:
-                    fig.add_hline(y=chart_config['threshold_good'], line_dash="dash", line_color="orange")
+                    fig.add_hline(y=chart_config['threshold_good'], line_dash="dash", 
+                                 line_color="orange", annotation_text=chart_config['threshold_labels'].get(chart_config['threshold_good'], ''))
                 
                 fig.update_layout(title=chart_config['title'], height=400, hovermode='x unified')
                 st.plotly_chart(fig, use_container_width=True)
+                
+                # Explanation
+                with st.expander("📌 Threshold Explanation"):
+                    st.write(f"**Green Line ({chart_config['threshold_excellent']}):** {chart_config['threshold_labels'].get(chart_config['threshold_excellent'], 'Excellent performance')}")
+                    st.write(f"**Orange Line ({chart_config['threshold_good']}):** {chart_config['threshold_labels'].get(chart_config['threshold_good'], 'Good performance')}")
             
             elif chart_config['type'] == 'multi_line':
                 fig = go.Figure()
-                for col, label in zip(chart_config['columns'], chart_config['labels']):
+                colors = ['green', 'orange', 'blue']
+                for col, label, color in zip(chart_config['columns'], chart_config['labels'], colors):
                     col_data = pd.to_numeric(df[col], errors='coerce')
-                    fig.add_trace(go.Scatter(x=df['Date'], y=col_data, mode='lines', name=label, linewidth=2))
+                    fig.add_trace(go.Scatter(x=df['Date'], y=col_data, mode='lines', name=label, 
+                                            line=dict(width=2, color=color)))
                 
                 fig.update_layout(title=chart_config['title'], height=400, hovermode='x unified')
                 st.plotly_chart(fig, use_container_width=True)
@@ -738,6 +823,11 @@ else:
                 
                 fig.update_layout(title=chart_config['title'], height=400, hovermode='x unified')
                 st.plotly_chart(fig, use_container_width=True)
+                
+                with st.expander("📌 Flow Balance Explanation"):
+                    st.write("**Red Line (Influent):** Water flowing into the treatment plant")
+                    st.write("**Green Line (Effluent):** Treated water flowing out")
+                    st.write("**Difference:** Typically 5-15% due to evaporation and sludge removal")
             
             elif chart_config['type'] == 'ratio':
                 col1_data = pd.to_numeric(df[chart_config['column1']], errors='coerce')
@@ -750,10 +840,15 @@ else:
                                         marker=dict(size=3, color='teal', opacity=0.5)))
                 fig.add_trace(go.Scatter(x=df['Date'], y=ratio_ma, mode='lines', name='7-day MA',
                                         line=dict(color='darkslategray', width=2)))
-                fig.add_hline(y=chart_config['threshold'], line_dash="dash", line_color="green")
+                fig.add_hline(y=chart_config['threshold'], line_dash="dash", line_color="green",
+                             annotation_text=chart_config['threshold_labels'].get(chart_config['threshold'], ''))
                 
                 fig.update_layout(title=chart_config['title'], height=400, hovermode='x unified')
                 st.plotly_chart(fig, use_container_width=True)
+                
+                with st.expander("📌 Ratio Explanation"):
+                    st.write(f"**Green Line ({chart_config['threshold']}):** Excellent dewatering threshold")
+                    st.write("**Higher ratio = Better dewatering:** More dry solids, fewer trucks needed")
             
             elif chart_config['type'] == 'bar_with_ma':
                 col_data = pd.to_numeric(df[chart_config['column']], errors='coerce')
@@ -782,9 +877,106 @@ else:
             st.divider()
     
     # ============================================================
-    # TAB 3: DETAILED RECOMMENDATIONS
+    # TAB 3: RELATIONSHIP ANALYSIS
     # ============================================================
     with tab3:
+        st.header("🔗 Relationship Analysis")
+        st.write("*Correlation between key metrics*")
+        
+        # Create correlation matrix
+        numeric_cols = {}
+        for key, col in found_columns.items():
+            if col and col in df.columns:
+                numeric_cols[key] = pd.to_numeric(df[col], errors='coerce')
+        
+        if len(numeric_cols) >= 2:
+            corr_df = pd.DataFrame(numeric_cols).corr()
+            
+            # Heatmap
+            fig = go.Figure(data=go.Heatmap(
+                z=corr_df.values,
+                x=corr_df.columns,
+                y=corr_df.columns,
+                colorscale='RdBu',
+                zmid=0,
+                text=np.round(corr_df.values, 2),
+                texttemplate='%{text}',
+                textfont={"size": 10}
+            ))
+            fig.update_layout(title="Metric Correlation Matrix", height=500)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            st.divider()
+            
+            # Scatter plots for key relationships
+            if found_columns['polymer'] and found_columns['cake']:
+                if found_columns['polymer'] in df.columns and found_columns['cake'] in df.columns:
+                    poly_data = pd.to_numeric(df[found_columns['polymer']], errors='coerce')
+                    cake_data = pd.to_numeric(df[found_columns['cake']], errors='coerce')
+                    
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=poly_data, y=cake_data, mode='markers',
+                                            marker=dict(size=8, color='blue', opacity=0.6)))
+                    
+                    # Add trendline
+                    z = np.polyfit(poly_data.dropna(), cake_data[poly_data.notna()], 1)
+                    p = np.poly1d(z)
+                    x_trend = np.linspace(poly_data.min(), poly_data.max(), 100)
+                    fig.add_trace(go.Scatter(x=x_trend, y=p(x_trend), mode='lines',
+                                            name='Trend', line=dict(color='red', width=2)))
+                    
+                    corr = poly_data.corr(cake_data)
+                    fig.update_layout(
+                        title=f"Polymer vs Cake Quality (Correlation: {corr:.2f})",
+                        xaxis_title="Polymer (lbs/ton)",
+                        yaxis_title="Cake Quality (%)",
+                        height=400
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    with st.expander("📌 Relationship Explanation"):
+                        if corr < -0.5:
+                            st.write("**Strong Negative Correlation:** Higher polymer dose improves cake quality (as expected)")
+                        elif corr > 0.5:
+                            st.write("**Strong Positive Correlation:** Unusual - investigate why more polymer doesn't improve cake")
+                        else:
+                            st.write("**Weak Correlation:** Other factors may be affecting cake quality")
+            
+            if found_columns['trucks'] and found_columns['cake']:
+                if found_columns['trucks'] in df.columns and found_columns['cake'] in df.columns:
+                    trucks_data = pd.to_numeric(df[found_columns['trucks']], errors='coerce')
+                    cake_data = pd.to_numeric(df[found_columns['cake']], errors='coerce')
+                    
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=cake_data, y=trucks_data, mode='markers',
+                                            marker=dict(size=8, color='green', opacity=0.6)))
+                    
+                    # Add trendline
+                    z = np.polyfit(cake_data.dropna(), trucks_data[cake_data.notna()], 1)
+                    p = np.poly1d(z)
+                    x_trend = np.linspace(cake_data.min(), cake_data.max(), 100)
+                    fig.add_trace(go.Scatter(x=x_trend, y=p(x_trend), mode='lines',
+                                            name='Trend', line=dict(color='red', width=2)))
+                    
+                    corr = cake_data.corr(trucks_data)
+                    fig.update_layout(
+                        title=f"Cake Quality vs Trucks (Correlation: {corr:.2f})",
+                        xaxis_title="Cake Quality (%)",
+                        yaxis_title="Daily Trucks",
+                        height=400
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    with st.expander("📌 Relationship Explanation"):
+                        if corr < -0.7:
+                            st.write("**Strong Negative Correlation:** Better cake quality = fewer trucks (as expected)")
+                        else:
+                            st.write("**Weak Correlation:** Other factors affecting truck requirements")
+    
+    # ============================================================
+    # TAB 4: DETAILED RECOMMENDATIONS
+    # ============================================================
+    with tab4:
         st.header("💡 Detailed AI Recommendations")
         
         recommendations = analyzer.generate_detailed_recommendations()
@@ -812,19 +1004,24 @@ else:
                     st.metric("Timeline", rec['timeline'])
                     st.metric("Risk Level", rec['risk'])
                 
+                # Additional data recommendations
+                if rec['additional_data']:
+                    with st.expander("📊 Additional Data to Collect"):
+                        st.write("**Recommended investigations and data collection:**")
+                        for data_item in rec['additional_data']:
+                            st.write(f"- {data_item}")
+                
                 st.divider()
     
     # ============================================================
-    # TAB 4: DATA QUALITY
+    # TAB 5: DATA QUALITY
     # ============================================================
-    with tab4:
+    with tab5:
         st.header("🔍 Data Quality Analysis")
         
-        # Generate quality report
         columns_to_check = [col for col in found_columns.values() if col and col in df.columns]
         quality_report = quality_checker.generate_report(columns_to_check)
         
-        # Overall summary
         st.subheader("📊 Overall Data Quality Summary")
         col_dq1, col_dq2, col_dq3 = st.columns(3)
         
@@ -837,7 +1034,6 @@ else:
         
         st.divider()
         
-        # Column-by-column analysis
         st.subheader("📋 Column-by-Column Analysis")
         
         for col_name, col_analysis in quality_report['column_analysis'].items():
@@ -863,11 +1059,10 @@ else:
                 
                 if col_analysis['outliers_iqr']['count'] > 0:
                     st.write("**Outlier Values:**")
-                    st.write(col_analysis['outliers_iqr']['values'][:10])  # Show first 10
+                    st.write(col_analysis['outliers_iqr']['values'][:10])
         
         st.divider()
         
-        # Data quality score
         st.subheader("📈 Data Quality Score")
         
         total_missing = sum([col['missing']['percentage'] for col in quality_report['column_analysis'].values()])
@@ -888,11 +1083,11 @@ else:
                 st.error("❌ Poor data quality - investigate issues")
     
     # ============================================================
-    # TAB 5: ASSUMPTIONS
+    # TAB 6: ASSUMPTIONS
     # ============================================================
-    with tab5:
+    with tab6:
         st.header("📋 Analysis Assumptions")
-        st.write("*These are the assumptions used in the AI analysis*")
+        st.write("*These are the assumptions and thresholds used in the AI analysis*")
         
         for metric, assumptions in analyzer.assumptions.items():
             with st.expander(f"📌 {metric}"):
@@ -900,9 +1095,9 @@ else:
                     st.write(f"**{key}:** {value}")
     
     # ============================================================
-    # TAB 6: STATISTICS
+    # TAB 7: STATISTICS
     # ============================================================
-    with tab6:
+    with tab7:
         st.header("📊 Statistical Summary")
         
         summary_data = []
@@ -940,9 +1135,9 @@ else:
         )
     
     # ============================================================
-    # TAB 7: RAW DATA
+    # TAB 8: RAW DATA
     # ============================================================
-    with tab7:
+    with tab8:
         st.header("📋 Raw Data")
         st.dataframe(df, use_container_width=True)
         
@@ -953,5 +1148,3 @@ else:
             file_name="wwtp_data.csv",
             mime="text/csv"
         )
-
-
