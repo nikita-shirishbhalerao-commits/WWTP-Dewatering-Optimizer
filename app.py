@@ -50,88 +50,61 @@ class ColumnCategorizer:
     def categorize_all_columns(self):
         """Categorize every column in the dataset"""
         
-        # Define keyword patterns for each category
         patterns = {
             'Date': ['date', 'time', 'day', 'month', 'year'],
-            
-            # Dewatering - Polymer
             'Dewatering - Polymer': [
                 'polymer', 'poly', 'active poly', 'lbs per ton', 'lbs/ton',
                 'polymer dose', 'polymer usage', 'polymer efficiency',
                 'centrifuge polymer', 'dewatering polymer'
             ],
-            
-            # Dewatering - Cake Quality
             'Dewatering - Cake Quality': [
                 'cake', 'solids', 'cake avg', 'cake %', 'cake quality',
                 'centrifuge cake', 'dewatering cake', 'moisture', 'dry solids'
             ],
-            
-            # Dewatering - Equipment
             'Dewatering - Equipment': [
                 'centrifuge', 'run hours', 'runtime', 'bowl speed', 'rpm',
                 'feed rate', 'gpm', 'scroll speed', 'differential'
             ],
-            
-            # Dewatering - Sludge
             'Dewatering - Sludge': [
                 'dry tons', 'wet tons', 'dry', 'wet', 'tons', 'sludge',
                 'trucks', 'hauling', 'cake hauled'
             ],
-            
-            # Thickening - Feed
             'Thickening - Feed': [
                 'thickener feed', 'thickener inlet', 'feed rate',
                 'thickener gpm', 'thickener flow'
             ],
-            
-            # Thickening - Underflow
             'Thickening - Underflow': [
                 'thickener underflow', 'underflow ts', 'underflow solids',
                 'thickener solids', 'thickener concentration', 'underflow %'
             ],
-            
-            # Thickening - Overflow
             'Thickening - Overflow': [
                 'thickener overflow', 'overflow tss', 'overflow clarity',
                 'overflow solids', 'overflow suspended'
             ],
-            
-            # Thickening - Equipment
             'Thickening - Equipment': [
                 'thickener', 'rake', 'torque', 'depth', 'area',
                 'thickener runtime', 'thickener hours'
             ],
-            
-            # Flow - Influent
             'Flow - Influent': [
                 'influent', 'inflow', 'inlet', 'incoming', 'mgd',
                 'flow in', 'wastewater flow'
             ],
-            
-            # Flow - Effluent
             'Flow - Effluent': [
                 'effluent', 'outflow', 'outlet', 'dval', 'flow out',
                 'treated flow', 'discharge'
             ],
-            
-            # Flow - Other
             'Flow - Other': [
                 'recycle', 'return', 'bypass', 'flow', 'gpm', 'mgd'
             ],
-            
-            # Cost
             'Cost': [
                 'cost', 'price', 'expense', 'dollar', '$', 'rate'
             ]
         }
         
-        # Categorize each column
         for col in self.columns:
             col_lower = col.lower()
             categorized = False
             
-            # Check each pattern
             for category, keywords in patterns.items():
                 for keyword in keywords:
                     if fuzz.ratio(keyword, col_lower) > 75 or keyword in col_lower:
@@ -141,7 +114,6 @@ class ColumnCategorizer:
                 if categorized:
                     break
             
-            # If not categorized, put in Other
             if not categorized:
                 self.categories['Other'].append(col)
         
@@ -239,9 +211,64 @@ class PerformanceAnalyzer:
     def __init__(self, df, categorizer):
         self.df = df
         self.categorizer = categorizer
+        self.assumptions = self._get_assumptions()
     
-    def generate_recommendations(self):
-        """Generate recommendations based on available data"""
+    def _get_assumptions(self):
+        """Define analysis assumptions"""
+        return {
+            'Dewatering - Polymer Efficiency': {
+                'Excellent': '< 12 lbs/ton',
+                'Good': '12-15 lbs/ton',
+                'Poor': '> 15 lbs/ton',
+                'Rationale': 'Lower polymer use = better efficiency and cost savings. Based on industry best practices for centrifuge dewatering.',
+                'Data Source': 'Active Polymer per Dry Ton metric'
+            },
+            'Dewatering - Cake Quality': {
+                'Excellent': '> 25% solids',
+                'Good': '20-25% solids',
+                'Poor': '< 20% solids',
+                'Rationale': 'Higher solids = better dewatering, fewer trucks needed. Typical municipal WWTP targets 22-28%.',
+                'Data Source': 'Centrifuge Cake Average % metric'
+            },
+            'Thickening - Underflow Concentration': {
+                'Excellent': '> 5% TS',
+                'Good': '3-5% TS',
+                'Poor': '< 3% TS',
+                'Rationale': 'Higher concentration reduces downstream processing load. Typical range 4-6% for gravity thickeners.',
+                'Data Source': 'Thickener Underflow TS metric'
+            },
+            'Thickening - Overflow Clarity': {
+                'Excellent': '< 500 mg/L TSS',
+                'Good': '500-1000 mg/L TSS',
+                'Poor': '> 1000 mg/L TSS',
+                'Rationale': 'Lower TSS in overflow indicates better separation. Typical target < 300 mg/L.',
+                'Data Source': 'Thickener Overflow TSS metric'
+            },
+            'Equipment Utilization': {
+                'Optimal': '40-70%',
+                'Underutilized': '< 40%',
+                'Overutilized': '> 70%',
+                'Rationale': 'Balanced utilization prevents equipment wear, maintains capacity, and allows for maintenance.',
+                'Data Source': 'Average of Centrifuge Run Hours'
+            },
+            'Dry/Wet Ratio': {
+                'Excellent': '> 0.25',
+                'Good': '0.20-0.25',
+                'Poor': '< 0.20',
+                'Rationale': 'Higher ratio indicates better sludge dewatering efficiency. Typical range 0.22-0.30.',
+                'Data Source': 'Dry Tons / Wet Tons calculation'
+            },
+            'Flow Balance': {
+                'Normal': '< 15% difference',
+                'Investigate': '15-25% difference',
+                'Critical': '> 25% difference',
+                'Rationale': 'Large differences may indicate treatment delays or measurement errors. Typical evaporation 5-10%.',
+                'Data Source': '(Influent - Effluent) / Influent × 100'
+            }
+        }
+    
+    def generate_detailed_recommendations(self):
+        """Generate comprehensive recommendations"""
         recommendations = []
         
         # Dewatering Polymer Analysis
@@ -251,23 +278,85 @@ class PerformanceAnalyzer:
             poly_data = pd.to_numeric(self.df[poly_col], errors='coerce').dropna()
             if len(poly_data) > 0:
                 poly_avg = poly_data.mean()
+                poly_current = poly_data.iloc[-1]
                 
-                if poly_avg > 15:
+                if poly_avg > 18:
+                    savings = (poly_avg - 12) * 50 * 365
                     recommendations.append({
-                        'priority': '🔴 HIGH',
+                        'priority': '🔴 CRITICAL',
+                        'category': 'Dewatering - Polymer Efficiency',
+                        'metric': poly_col,
+                        'current': f'{poly_avg:.2f}',
+                        'target': '12',
+                        'unit': 'lbs/ton',
+                        'issue': 'Extremely high polymer consumption',
+                        'root_causes': [
+                            'Centrifuge bowl speed too low',
+                            'Feed rate too high',
+                            'Poor polymer quality or degradation',
+                            'Sludge characteristics changed',
+                            'Equipment wear or malfunction'
+                        ],
+                        'actions': [
+                            'Increase centrifuge bowl speed by 5-10%',
+                            'Reduce feed rate by 10-15%',
+                            'Test polymer quality and shelf life',
+                            'Inspect centrifuge for wear',
+                            'Analyze incoming sludge characteristics'
+                        ],
+                        'savings': f'${savings:,.0f}/year',
+                        'timeline': '1-2 weeks',
+                        'risk': 'High - May affect cake quality initially'
+                    })
+                elif poly_avg > 15:
+                    savings = (poly_avg - 12) * 50 * 365
+                    recommendations.append({
+                        'priority': '🟠 HIGH',
                         'category': 'Dewatering - Polymer Efficiency',
                         'metric': poly_col,
                         'current': f'{poly_avg:.2f}',
                         'target': '12',
                         'unit': 'lbs/ton',
                         'issue': 'High polymer consumption',
-                        'actions': [
-                            'Reduce polymer dose by 10-15%',
-                            'Optimize centrifuge speed',
-                            'Stabilize feed rate',
-                            'Check polymer quality'
+                        'root_causes': [
+                            'Suboptimal centrifuge parameters',
+                            'Polymer dose not optimized',
+                            'Feed rate inconsistency'
                         ],
-                        'savings': f'${(poly_avg - 12) * 50 * 365:,.0f}/year'
+                        'actions': [
+                            'Conduct polymer dose optimization study',
+                            'Adjust centrifuge speed incrementally',
+                            'Stabilize feed rate'
+                        ],
+                        'savings': f'${savings:,.0f}/year',
+                        'timeline': '2-4 weeks',
+                        'risk': 'Medium - Monitor cake quality'
+                    })
+                
+                if poly_current > poly_avg * 1.3:
+                    recommendations.append({
+                        'priority': '🟡 MEDIUM',
+                        'category': 'Dewatering - Polymer Efficiency',
+                        'metric': poly_col,
+                        'current': f'{poly_current:.2f}',
+                        'target': f'{poly_avg:.2f}',
+                        'unit': 'lbs/ton',
+                        'issue': 'Recent significant spike in polymer usage',
+                        'root_causes': [
+                            'Sudden change in sludge characteristics',
+                            'Equipment malfunction',
+                            'Polymer supply issue',
+                            'Operational error'
+                        ],
+                        'actions': [
+                            'Investigate sludge quality changes',
+                            'Check centrifuge performance',
+                            'Verify polymer supply and storage',
+                            'Review operator logs'
+                        ],
+                        'savings': 'Prevent future spikes',
+                        'timeline': 'Immediate',
+                        'risk': 'Low - Investigation only'
                     })
         
         # Cake Quality Analysis
@@ -278,22 +367,56 @@ class PerformanceAnalyzer:
             if len(cake_data) > 0:
                 cake_avg = cake_data.mean()
                 
-                if cake_avg < 20:
+                if cake_avg < 18:
+                    truck_savings = 50 * 365 * 500
                     recommendations.append({
-                        'priority': '🔴 HIGH',
+                        'priority': '🔴 CRITICAL',
                         'category': 'Dewatering - Cake Quality',
                         'metric': cake_col,
                         'current': f'{cake_avg:.2f}',
                         'target': '25',
                         'unit': '%',
-                        'issue': 'Poor cake quality - wet sludge',
+                        'issue': 'Poor cake quality - very wet sludge',
+                        'root_causes': [
+                            'Insufficient polymer dose',
+                            'Centrifuge bowl speed too high',
+                            'Sludge feed rate too high',
+                            'Polymer type not suitable',
+                            'Equipment wear or damage'
+                        ],
                         'actions': [
-                            'Increase polymer dose',
+                            'Increase polymer dose by 15-20%',
                             'Reduce centrifuge bowl speed',
                             'Reduce feed rate',
-                            'Inspect equipment for wear'
+                            'Consider polymer type change',
+                            'Inspect centrifuge bowl and scroll'
                         ],
-                        'savings': 'Reduce truck hauling costs'
+                        'savings': f'${truck_savings:,.0f}/year (truck reduction)',
+                        'timeline': '1-2 weeks',
+                        'risk': 'Low - Improves operation'
+                    })
+                elif cake_avg < 22:
+                    recommendations.append({
+                        'priority': '🟠 HIGH',
+                        'category': 'Dewatering - Cake Quality',
+                        'metric': cake_col,
+                        'current': f'{cake_avg:.2f}',
+                        'target': '25',
+                        'unit': '%',
+                        'issue': 'Below-optimal cake quality',
+                        'root_causes': [
+                            'Polymer dose could be optimized',
+                            'Centrifuge parameters not ideal',
+                            'Sludge characteristics variable'
+                        ],
+                        'actions': [
+                            'Fine-tune polymer dose',
+                            'Optimize centrifuge speed',
+                            'Stabilize feed rate'
+                        ],
+                        'savings': 'Reduce truck hauling costs',
+                        'timeline': '2-4 weeks',
+                        'risk': 'Low'
                     })
         
         # Thickener Analysis
@@ -312,14 +435,22 @@ class PerformanceAnalyzer:
                         'current': f'{thick_avg:.2f}',
                         'target': '5',
                         'unit': '% TS',
-                        'issue': 'Low thickener underflow solids',
+                        'issue': 'Low thickener underflow solids concentration',
+                        'root_causes': [
+                            'Insufficient retention time',
+                            'High feed rate',
+                            'Poor polymer conditioning',
+                            'Rake mechanism issues'
+                        ],
                         'actions': [
-                            'Reduce feed rate',
+                            'Reduce feed rate to thickener',
                             'Increase retention time',
                             'Optimize polymer dose',
-                            'Check rake mechanism'
+                            'Check rake mechanism operation'
                         ],
-                        'savings': 'Reduce downstream processing load'
+                        'savings': 'Reduce downstream processing load',
+                        'timeline': '1-2 weeks',
+                        'risk': 'Low'
                     })
         
         return recommendations if recommendations else [{
@@ -330,15 +461,18 @@ class PerformanceAnalyzer:
             'target': 'N/A',
             'unit': 'N/A',
             'issue': 'Plant operating well',
+            'root_causes': [],
             'actions': ['Continue monitoring', 'Maintain preventive maintenance'],
-            'savings': 'Maintain current efficiency'
+            'savings': 'Maintain current efficiency',
+            'timeline': 'Ongoing',
+            'risk': 'Low'
         }]
     
     def generate_charts(self):
         """Generate charts based on available data"""
         charts = []
         
-        # Dewatering Polymer Chart
+        # 1. Dewatering Polymer Chart
         poly_cols = self.categorizer.get_all_columns_in_category('Dewatering - Polymer')
         if poly_cols:
             charts.append({
@@ -350,7 +484,7 @@ class PerformanceAnalyzer:
                 'threshold_good': 15
             })
         
-        # Cake Quality Chart
+        # 2. Cake Quality Chart
         cake_cols = self.categorizer.get_all_columns_in_category('Dewatering - Cake Quality')
         if cake_cols:
             charts.append({
@@ -362,19 +496,36 @@ class PerformanceAnalyzer:
                 'threshold_good': 20
             })
         
-        # Equipment Hours Chart
+        # 3. Equipment Hours - Centrifuge 1
         equip_cols = self.categorizer.get_all_columns_in_category('Dewatering - Equipment')
-        if len(equip_cols) >= 3:
-            hour_cols = [col for col in equip_cols if 'hour' in col.lower() or 'runtime' in col.lower()]
-            if len(hour_cols) >= 2:
-                charts.append({
-                    'name': 'Equipment Run Hours',
-                    'columns': hour_cols[:3],
-                    'type': 'multi_line',
-                    'unit': 'hrs'
-                })
+        hour_cols = [col for col in equip_cols if 'hour' in col.lower() or 'runtime' in col.lower()]
+        if len(hour_cols) >= 1:
+            charts.append({
+                'name': 'Centrifuge 1 Run Hours',
+                'column': hour_cols[0],
+                'type': 'bar_with_ma',
+                'unit': 'hrs'
+            })
         
-        # Thickener Underflow Chart
+        # 4. Equipment Hours - Centrifuge 2
+        if len(hour_cols) >= 2:
+            charts.append({
+                'name': 'Centrifuge 2 Run Hours',
+                'column': hour_cols[1],
+                'type': 'bar_with_ma',
+                'unit': 'hrs'
+            })
+        
+        # 5. Equipment Hours - Centrifuge 3
+        if len(hour_cols) >= 3:
+            charts.append({
+                'name': 'Centrifuge 3 Run Hours',
+                'column': hour_cols[2],
+                'type': 'bar_with_ma',
+                'unit': 'hrs'
+            })
+        
+        # 6. Thickener Underflow Chart
         thick_uf_cols = self.categorizer.get_all_columns_in_category('Thickening - Underflow')
         if thick_uf_cols:
             charts.append({
@@ -386,7 +537,7 @@ class PerformanceAnalyzer:
                 'threshold_good': 3
             })
         
-        # Thickener Overflow Chart
+        # 7. Thickener Overflow Chart
         thick_of_cols = self.categorizer.get_all_columns_in_category('Thickening - Overflow')
         if thick_of_cols:
             charts.append({
@@ -398,27 +549,57 @@ class PerformanceAnalyzer:
                 'threshold_good': 1000
             })
         
-        # Flow Chart
+        # 8. Flow Balance Chart
         inf_cols = self.categorizer.get_all_columns_in_category('Flow - Influent')
         eff_cols = self.categorizer.get_all_columns_in_category('Flow - Effluent')
         if inf_cols and eff_cols:
             charts.append({
-                'name': 'Flow Balance',
+                'name': 'Flow Balance (Influent vs Effluent)',
                 'column1': inf_cols[0],
                 'column2': eff_cols[0],
                 'type': 'dual_line',
                 'unit': 'MGD'
             })
         
-        # Sludge Production Chart
+        # 9. Sludge Production Chart
         sludge_cols = self.categorizer.get_all_columns_in_category('Dewatering - Sludge')
-        dry_cols = [col for col in sludge_cols if 'dry' in col.lower()]
+        dry_cols = [col for col in sludge_cols if 'dry' in col.lower() and 'ton' in col.lower()]
         if dry_cols:
             charts.append({
-                'name': 'Daily Sludge Production',
+                'name': 'Daily Sludge Production (Dry Tons)',
                 'column': dry_cols[0],
                 'type': 'bar_with_ma',
                 'unit': 'tons'
+            })
+        
+        # 10. Truck Hauling Chart
+        truck_cols = [col for col in sludge_cols if 'truck' in col.lower()]
+        if truck_cols:
+            charts.append({
+                'name': 'Daily Sludge Trucks',
+                'column': truck_cols[0],
+                'type': 'bar_with_ma',
+                'unit': 'trucks'
+            })
+        
+        # 11. Wet Tons Chart
+        wet_cols = [col for col in sludge_cols if 'wet' in col.lower() and 'ton' in col.lower()]
+        if wet_cols:
+            charts.append({
+                'name': 'Total Centrifuge Sludge (Wet Tons)',
+                'column': wet_cols[0],
+                'type': 'bar_with_ma',
+                'unit': 'tons'
+            })
+        
+        # 12. Dry/Wet Ratio Chart
+        if dry_cols and wet_cols:
+            charts.append({
+                'name': 'Dewatering Efficiency (Dry/Wet Ratio)',
+                'column1': dry_cols[0],
+                'column2': wet_cols[0],
+                'type': 'ratio_chart',
+                'unit': 'ratio'
             })
         
         return charts
@@ -446,8 +627,10 @@ if uploaded_file is None:
     
     1. **Scan all columns** and categorize them by process type
     2. **Show you what it found** before running analysis
-    3. **Generate charts** based on available data
-    4. **Provide recommendations** tailored to your data
+    3. **Generate 10+ charts** based on available data
+    4. **Provide detailed recommendations** tailored to your data
+    5. **Analyze correlations** between metrics
+    6. **Display assumptions** used in analysis
     
     ### 🔍 Supported Data Types:
     
@@ -484,11 +667,12 @@ else:
         # Try to find and parse date column
         date_col = None
         for col in df.columns:
-            if 'date' in col.lower() or 'time' in col.lower():
+            if 'date' in col.lower() or 'time' in col.lower() or 'month' in col.lower():
                 try:
                     df[col] = pd.to_datetime(df[col], errors='coerce')
-                    date_col = col
-                    break
+                    if df[col].notna().sum() > len(df) * 0.5:  # At least 50% valid dates
+                        date_col = col
+                        break
                 except:
                     pass
         
@@ -498,6 +682,7 @@ else:
             st.sidebar.write(f"📅 {df[date_col].min().date()} to {df[date_col].max().date()}")
         else:
             st.sidebar.success(f"✅ Loaded {len(df)} records")
+            st.sidebar.warning("⚠️ No date column detected - using index")
         
     except Exception as e:
         st.error(f"Error loading file: {e}")
@@ -508,13 +693,16 @@ else:
     categories = categorizer.categorize_all_columns()
     
     # Create tabs
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
         "📋 Column Detection",
         "📈 Dashboard",
         "📊 Charts",
+        "🔗 Correlation Analysis",
         "💡 Recommendations",
+        "📋 Assumptions",
+        "📉 Statistics",
         "🔍 Data Quality",
-        "📥 Data"
+        "📥 Raw Data"
     ])
     
     # ============================================================
@@ -528,7 +716,7 @@ else:
         
         # Display categorized columns
         for category, columns in categories.items():
-            if columns:  # Only show categories with columns
+            if columns:
                 with st.expander(f"**{category}** ({len(columns)} columns)", expanded=True):
                     for col in columns:
                         st.write(f"✅ `{col}`")
@@ -656,6 +844,47 @@ else:
                         "Effluent Flow",
                         f"{eff_data.mean():.2f} MGD"
                     )
+        
+        st.divider()
+        
+        # Sludge Metrics
+        st.subheader("📦 Sludge Metrics")
+        col_sludge1, col_sludge2, col_sludge3 = st.columns(3)
+        
+        dry_cols = [col for col in sludge_cols if 'dry' in col.lower() and 'ton' in col.lower()]
+        if dry_cols:
+            dry_data = pd.to_numeric(df[dry_cols[0]], errors='coerce').dropna()
+            if len(dry_data) > 0:
+                with col_sludge1:
+                    st.metric(
+                        "Avg Dry Tons/Day",
+                        f"{dry_data.mean():.2f}",
+                        "tons"
+                    )
+        
+        wet_cols = [col for col in sludge_cols if 'wet' in col.lower() and 'ton' in col.lower()]
+        if wet_cols:
+            wet_data = pd.to_numeric(df[wet_cols[0]], errors='coerce').dropna()
+            if len(wet_data) > 0:
+                with col_sludge2:
+                    st.metric(
+                        "Avg Wet Tons/Day",
+                        f"{wet_data.mean():.2f}",
+                        "tons"
+                    )
+        
+        if dry_cols and wet_cols:
+            dry_data = pd.to_numeric(df[dry_cols[0]], errors='coerce').dropna()
+            wet_data = pd.to_numeric(df[wet_cols[0]], errors='coerce').dropna()
+            common_idx = dry_data.index.intersection(wet_data.index)
+            if len(common_idx) > 0:
+                ratio = (dry_data[common_idx] / wet_data[common_idx]).mean()
+                with col_sludge3:
+                    st.metric(
+                        "Dry/Wet Ratio",
+                        f"{ratio:.3f}",
+                        "ratio"
+                    )
     
     # ============================================================
     # TAB 3: CHARTS
@@ -669,18 +898,21 @@ else:
         if not charts:
             st.warning("⚠️ No suitable data found for charts. Check your column names.")
         else:
+            st.write(f"*Displaying {len(charts)} charts based on your data*")
+            st.divider()
+            
             for i, chart_config in enumerate(charts):
                 st.subheader(f"{i+1}. {chart_config['name']}")
                 
                 try:
                     if chart_config['type'] == 'line_with_ma':
                         col_data = pd.to_numeric(df[chart_config['column']], errors='coerce')
-                        col_ma = col_data.rolling(window=7).mean()
+                        col_ma = col_data.rolling(window=3).mean()
                         
                         fig = go.Figure()
-                        fig.add_trace(go.Scatter(x=df.index, y=col_data, mode='markers', name='Daily',
-                                                marker=dict(size=4, color='#1f4788', opacity=0.7)))
-                        fig.add_trace(go.Scatter(x=df.index, y=col_ma, mode='lines', name='7-day MA',
+                        fig.add_trace(go.Scatter(x=range(len(col_data)), y=col_data, mode='markers', name='Daily',
+                                                marker=dict(size=6, color='#1f4788', opacity=0.6)))
+                        fig.add_trace(go.Scatter(x=range(len(col_ma)), y=col_ma, mode='lines', name='3-Month MA',
                                                 line=dict(color='#003d99', width=3)))
                         
                         if 'threshold_excellent' in chart_config:
@@ -691,17 +923,18 @@ else:
                                          line_color="orange", annotation_text="Good")
                         
                         fig.update_layout(title=f"{chart_config['name']} ({chart_config['unit']})", 
-                                         height=400, hovermode='x unified')
+                                         height=400, hovermode='x unified',
+                                         xaxis_title="Month", yaxis_title=chart_config['unit'])
                         st.plotly_chart(fig, use_container_width=True)
                     
                     elif chart_config['type'] == 'line_with_ma_inverse':
                         col_data = pd.to_numeric(df[chart_config['column']], errors='coerce')
-                        col_ma = col_data.rolling(window=7).mean()
+                        col_ma = col_data.rolling(window=3).mean()
                         
                         fig = go.Figure()
-                        fig.add_trace(go.Scatter(x=df.index, y=col_data, mode='markers', name='Daily',
-                                                marker=dict(size=4, color='#8B0000', opacity=0.7)))
-                        fig.add_trace(go.Scatter(x=df.index, y=col_ma, mode='lines', name='7-day MA',
+                        fig.add_trace(go.Scatter(x=range(len(col_data)), y=col_data, mode='markers', name='Daily',
+                                                marker=dict(size=6, color='#8B0000', opacity=0.6)))
+                        fig.add_trace(go.Scatter(x=range(len(col_ma)), y=col_ma, mode='lines', name='3-Month MA',
                                                 line=dict(color='#DC143C', width=3)))
                         
                         if 'threshold_excellent' in chart_config:
@@ -712,19 +945,23 @@ else:
                                          line_color="orange", annotation_text="Good")
                         
                         fig.update_layout(title=f"{chart_config['name']} ({chart_config['unit']}) - Lower is Better", 
-                                         height=400, hovermode='x unified')
+                                         height=400, hovermode='x unified',
+                                         xaxis_title="Month", yaxis_title=chart_config['unit'])
                         st.plotly_chart(fig, use_container_width=True)
                     
-                    elif chart_config['type'] == 'multi_line':
+                    elif chart_config['type'] == 'bar_with_ma':
+                        col_data = pd.to_numeric(df[chart_config['column']], errors='coerce')
+                        col_ma = col_data.rolling(window=3).mean()
+                        
                         fig = go.Figure()
-                        colors = ['#1f4788', '#FF8C00', '#228B22']
-                        for col, color in zip(chart_config['columns'], colors):
-                            col_data = pd.to_numeric(df[col], errors='coerce')
-                            fig.add_trace(go.Scatter(x=df.index, y=col_data, mode='lines', name=col,
-                                                    line=dict(width=3, color=color)))
+                        fig.add_trace(go.Bar(x=range(len(col_data)), y=col_data, name='Monthly',
+                                            marker=dict(color='#4169E1', opacity=0.7)))
+                        fig.add_trace(go.Scatter(x=range(len(col_ma)), y=col_ma, mode='lines', name='3-Month MA',
+                                                line=dict(color='#00008B', width=3)))
                         
                         fig.update_layout(title=f"{chart_config['name']} ({chart_config['unit']})", 
-                                         height=400, hovermode='x unified')
+                                         height=400, hovermode='x unified',
+                                         xaxis_title="Month", yaxis_title=chart_config['unit'])
                         st.plotly_chart(fig, use_container_width=True)
                     
                     elif chart_config['type'] == 'dual_line':
@@ -732,27 +969,30 @@ else:
                         col2_data = pd.to_numeric(df[chart_config['column2']], errors='coerce')
                         
                         fig = go.Figure()
-                        fig.add_trace(go.Scatter(x=df.index, y=col1_data, mode='lines', name='Influent',
+                        fig.add_trace(go.Scatter(x=range(len(col1_data)), y=col1_data, mode='lines', name='Influent',
                                                 line=dict(color='#8B0000', width=3)))
-                        fig.add_trace(go.Scatter(x=df.index, y=col2_data, mode='lines', name='Effluent',
+                        fig.add_trace(go.Scatter(x=range(len(col2_data)), y=col2_data, mode='lines', name='Effluent',
                                                 line=dict(color='#228B22', width=3)))
                         
                         fig.update_layout(title=f"{chart_config['name']} ({chart_config['unit']})", 
-                                         height=400, hovermode='x unified')
+                                         height=400, hovermode='x unified',
+                                         xaxis_title="Month", yaxis_title=chart_config['unit'])
                         st.plotly_chart(fig, use_container_width=True)
                     
-                    elif chart_config['type'] == 'bar_with_ma':
-                        col_data = pd.to_numeric(df[chart_config['column']], errors='coerce')
-                        col_ma = col_data.rolling(window=7).mean()
+                    elif chart_config['type'] == 'ratio_chart':
+                        col1_data = pd.to_numeric(df[chart_config['column1']], errors='coerce')
+                        col2_data = pd.to_numeric(df[chart_config['column2']], errors='coerce')
+                        ratio_data = (col1_data / col2_data).replace([np.inf, -np.inf], np.nan)
                         
                         fig = go.Figure()
-                        fig.add_trace(go.Bar(x=df.index, y=col_data, name='Daily', 
-                                            marker=dict(color='#4169E1', opacity=0.7)))
-                        fig.add_trace(go.Scatter(x=df.index, y=col_ma, mode='lines', name='7-day MA',
-                                                line=dict(color='#00008B', width=3)))
+                        fig.add_trace(go.Bar(x=range(len(ratio_data)), y=ratio_data, name='Ratio',
+                                            marker=dict(color='#17becf', opacity=0.7)))
+                        fig.add_hline(y=0.25, line_dash="dash", line_color="green", annotation_text="Excellent (>0.25)")
+                        fig.add_hline(y=0.20, line_dash="dash", line_color="orange", annotation_text="Good (>0.20)")
                         
                         fig.update_layout(title=f"{chart_config['name']} ({chart_config['unit']})", 
-                                         height=400, hovermode='x unified')
+                                         height=400, hovermode='x unified',
+                                         xaxis_title="Month", yaxis_title=chart_config['unit'])
                         st.plotly_chart(fig, use_container_width=True)
                 
                 except Exception as e:
@@ -761,13 +1001,64 @@ else:
                 st.divider()
     
     # ============================================================
-    # TAB 4: RECOMMENDATIONS
+    # TAB 4: CORRELATION ANALYSIS
     # ============================================================
     with tab4:
+        st.header("🔗 Correlation Analysis")
+        st.write("*Relationships between key metrics*")
+        
+        # Select numeric columns
+        numeric_df = df.select_dtypes(include=[np.number])
+        
+        if len(numeric_df.columns) > 1:
+            # Correlation matrix
+            corr_matrix = numeric_df.corr()
+            
+            # Create heatmap
+            fig = go.Figure(data=go.Heatmap(
+                z=corr_matrix.values,
+                x=corr_matrix.columns,
+                y=corr_matrix.columns,
+                colorscale='RdBu',
+                zmid=0,
+                text=np.round(corr_matrix.values, 2),
+                texttemplate='%{text}',
+                textfont={"size": 8}
+            ))
+            fig.update_layout(title="Correlation Matrix", height=600, width=800)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Key correlations
+            st.subheader("Key Correlations")
+            
+            # Flatten correlation matrix and find strong correlations
+            corr_pairs = []
+            for i in range(len(corr_matrix.columns)):
+                for j in range(i+1, len(corr_matrix.columns)):
+                    corr_val = corr_matrix.iloc[i, j]
+                    if abs(corr_val) > 0.7:  # Strong correlation
+                        corr_pairs.append({
+                            'Variable 1': corr_matrix.columns[i],
+                            'Variable 2': corr_matrix.columns[j],
+                            'Correlation': corr_val
+                        })
+            
+            if corr_pairs:
+                corr_df = pd.DataFrame(corr_pairs).sort_values('Correlation', key=abs, ascending=False)
+                st.dataframe(corr_df, use_container_width=True)
+            else:
+                st.info("No strong correlations (>0.7) found between variables")
+        else:
+            st.warning("Not enough numeric columns for correlation analysis")
+    
+    # ============================================================
+    # TAB 5: RECOMMENDATIONS
+    # ============================================================
+    with tab5:
         st.header("💡 AI Recommendations")
         
         analyzer = PerformanceAnalyzer(df, categorizer)
-        recommendations = analyzer.generate_recommendations()
+        recommendations = analyzer.generate_detailed_recommendations()
         
         for i, rec in enumerate(recommendations, 1):
             with st.container():
@@ -775,7 +1066,7 @@ else:
                 with col_header1:
                     st.markdown(f"### {rec['priority']} {rec['category']}")
                 with col_header2:
-                    st.write(f"**Metric:** {rec['metric']}")
+                    st.write(f"**Risk:** {rec['risk']}")
                 
                 st.markdown("---")
                 
@@ -792,36 +1083,118 @@ else:
                     
                     st.markdown("---")
                     
+                    if rec['root_causes']:
+                        st.write("**Root Causes:**")
+                        for cause in rec['root_causes']:
+                            st.write(f"• {cause}")
+                    
+                    st.markdown("---")
+                    
                     st.write("**Recommended Actions:**")
                     for j, action in enumerate(rec['actions'], 1):
                         st.write(f"{j}. {action}")
                 
                 with col_main2:
                     st.metric("Expected Savings", rec['savings'])
+                    st.metric("Timeline", rec['timeline'])
                 
                 st.markdown("")
     
     # ============================================================
-    # TAB 5: DATA QUALITY
+    # TAB 6: ASSUMPTIONS
     # ============================================================
-    with tab5:
+    with tab6:
+        st.header("📋 Analysis Assumptions & Thresholds")
+        st.write("*These are the industry standards used to evaluate your plant*")
+        
+        analyzer = PerformanceAnalyzer(df, categorizer)
+        
+        for metric, details in analyzer.assumptions.items():
+            with st.expander(f"**{metric}**", expanded=False):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("**Performance Levels:**")
+                    for level, threshold in details.items():
+                        if level not in ['Rationale', 'Data Source']:
+                            st.write(f"• **{level}:** {threshold}")
+                
+                with col2:
+                    st.write("**Details:**")
+                    st.write(f"**Rationale:** {details['Rationale']}")
+                    st.write(f"**Data Source:** {details['Data Source']}")
+    
+    # ============================================================
+    # TAB 7: STATISTICS
+    # ============================================================
+    with tab7:
+        st.header("📉 Statistical Summary")
+        st.write("*Detailed statistics for all numeric columns*")
+        
+        numeric_df = df.select_dtypes(include=[np.number])
+        
+        # Create statistics table
+        stats_data = {
+            'Column': [],
+            'Count': [],
+            'Mean': [],
+            'Std Dev': [],
+            'Min': [],
+            'Q1': [],
+            'Median': [],
+            'Q3': [],
+            'Max': []
+        }
+        
+        for col in numeric_df.columns:
+            data = numeric_df[col].dropna()
+            if len(data) > 0:
+                stats_data['Column'].append(col)
+                stats_data['Count'].append(len(data))
+                stats_data['Mean'].append(f"{data.mean():.2f}")
+                stats_data['Std Dev'].append(f"{data.std():.2f}")
+                stats_data['Min'].append(f"{data.min():.2f}")
+                stats_data['Q1'].append(f"{data.quantile(0.25):.2f}")
+                stats_data['Median'].append(f"{data.median():.2f}")
+                stats_data['Q3'].append(f"{data.quantile(0.75):.2f}")
+                stats_data['Max'].append(f"{data.max():.2f}")
+        
+        stats_df = pd.DataFrame(stats_data)
+        st.dataframe(stats_df, use_container_width=True)
+        
+        # Download statistics
+        csv = stats_df.to_csv(index=False)
+        st.download_button(
+            label="📥 Download Statistics",
+            data=csv,
+            file_name="WWTP_Statistics.csv",
+            mime="text/csv"
+        )
+    
+    # ============================================================
+    # TAB 8: DATA QUALITY
+    # ============================================================
+    with tab8:
         st.header("🔍 Data Quality Analysis")
         
         quality_checker = DataQualityChecker(df)
-        numeric_cols = [col for col in df.columns if pd.to_numeric(df[col], errors='coerce').notna().sum() > 0]
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
         quality_report = quality_checker.generate_report(numeric_cols)
         
         st.subheader("📊 Overall Summary")
-        col_dq1, col_dq2 = st.columns(2)
+        col_dq1, col_dq2, col_dq3 = st.columns(3)
         
         with col_dq1:
-            st.metric("Total Records", f"{quality_report['total_records']} records")
+            st.metric("Total Records", quality_report['total_records'])
         with col_dq2:
-            st.metric("Columns Analyzed", f"{len(quality_report['column_analysis'])} columns")
+            st.metric("Columns Analyzed", len(quality_report['column_analysis']))
+        with col_dq3:
+            total_missing = sum([v['missing']['count'] for v in quality_report['column_analysis'].values()])
+            st.metric("Total Missing Values", total_missing)
         
         st.divider()
         
-        st.subheader("📋 Column Analysis")
+        st.subheader("📋 Column-by-Column Analysis")
         
         for col_name, col_analysis in quality_report['column_analysis'].items():
             with st.expander(f"📊 {col_name}"):
@@ -839,21 +1212,41 @@ else:
                     st.write(f"Mean: {col_analysis['range']['mean']:.2f}")
                 
                 with col_dq_c:
-                    st.write("**Outliers:**")
+                    st.write("**Outliers (IQR):**")
                     st.write(f"Count: {col_analysis['outliers_iqr']['count']}")
                     st.write(f"Percentage: {col_analysis['outliers_iqr']['percentage']:.2f}%")
     
     # ============================================================
-    # TAB 6: RAW DATA
+    # TAB 9: RAW DATA
     # ============================================================
-    with tab6:
-        st.header("📋 Raw Data")
+    with tab9:
+        st.header("📥 Raw Data")
         st.dataframe(df, use_container_width=True)
         
-        csv = df.to_csv(index=False)
-        st.download_button(
-            label="📥 Download Data",
-            data=csv,
-            file_name="wwtp_data.csv",
-            mime="text/csv"
-        )
+        # Download options
+        col_download1, col_download2 = st.columns(2)
+        
+        with col_download1:
+            csv = df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download as CSV",
+                data=csv,
+                file_name="WWTP_Data_Analysis.csv",
+                mime="text/csv"
+            )
+        
+        with col_download2:
+            # Excel export
+            from io import BytesIO
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name='Data', index=False)
+            buffer.seek(0)
+            st.download_button(
+                label="📥 Download as Excel",
+                data=buffer.getvalue(),
+                file_name="WWTP_Data_Analysis.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+print("\n✅ Analysis Complete!")
