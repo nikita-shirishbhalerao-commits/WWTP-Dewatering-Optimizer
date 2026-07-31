@@ -1127,12 +1127,15 @@ else:
         else:
             mode = st.radio("Analysis Mode", ["Full Timeline", "Custom Period", "Period A vs Period B (Benchmark)"], horizontal=True)
 
-            col_s1, col_s2 = st.columns(2)
+            col_s1, col_s2, col_s3 = st.columns(3)
             with col_s1:
                 selected_column = st.selectbox("Select Indicator", list(numeric_cols.keys()), format_func=lambda x: f"{x} ({numeric_cols[x]})")
             with col_s2:
                 aggregation = st.selectbox("Aggregation Period", ["Daily", "Weekly", "Monthly", "Quarterly"])
+            with col_s3:
+                agg_method = st.selectbox("Aggregation Method", ["Average", "Total"], help="How to combine readings within each period, e.g. weekly average vs. weekly total.")
 
+            agg_func = 'sum' if agg_method == 'Total' else 'mean'
             freq_map = {"Daily": 'D', "Weekly": 'W', "Monthly": 'MS', "Quarterly": 'QS'}
 
             df_yoy = df[[date_col, selected_column]].copy()
@@ -1174,7 +1177,7 @@ else:
 
                 if mode == "Full Timeline":
                     try:
-                        df_agg = df_yoy.set_index(date_col)[selected_column].resample(freq_map[aggregation]).mean().dropna()
+                        df_agg = df_yoy.set_index(date_col)[selected_column].resample(freq_map[aggregation]).agg(agg_func).dropna()
                         if len(df_agg) > 0:
                             plot_series(df_agg, f"{selected_column} - {aggregation} Aggregation (Full Timeline)")
                         else:
@@ -1192,7 +1195,7 @@ else:
                             st.warning("No data in the selected range")
                         else:
                             try:
-                                df_agg = df_period.set_index(date_col)[selected_column].resample(freq_map[aggregation]).mean().dropna()
+                                df_agg = df_period.set_index(date_col)[selected_column].resample(freq_map[aggregation]).agg(agg_func).dropna()
                                 if len(df_agg) > 0:
                                     plot_series(df_agg, f"{selected_column} - {start_d.strftime('%b %d, %Y')} to {end_d.strftime('%b %d, %Y')}")
                                 else:
@@ -1204,13 +1207,14 @@ else:
 
                 else:  # Period A vs Period B (Benchmark) - defined by date ranges within the same file
                     st.write("**Define two date ranges** (e.g., Jan–Jun 2025 vs Jan–Jun 2026) and the app will pull the matching data for each and plot them together.")
+                    midpoint = data_min + (data_max - data_min) / 2
                     pc1, pc2 = st.columns(2)
                     with pc1:
                         st.markdown("**Period A**")
-                        a_range = st.date_input("Period A date range", value=(data_min, data_min), min_value=data_min, max_value=data_max, key="period_a_range")
+                        a_range = st.date_input("Period A date range", value=(data_min, midpoint), min_value=data_min, max_value=data_max, key="period_a_range")
                     with pc2:
                         st.markdown("**Period B**")
-                        b_range = st.date_input("Period B date range", value=(data_max, data_max), min_value=data_min, max_value=data_max, key="period_b_range")
+                        b_range = st.date_input("Period B date range", value=(midpoint, data_max), min_value=data_min, max_value=data_max, key="period_b_range")
 
                     if isinstance(a_range, tuple) and len(a_range) == 2 and isinstance(b_range, tuple) and len(b_range) == 2:
                         a_start, a_end = a_range
@@ -1224,21 +1228,48 @@ else:
                             st.warning("One or both periods have no data. Adjust the date ranges above.")
                         else:
                             try:
-                                agg_a = df_a.set_index(date_col)[selected_column].resample(freq_map[aggregation]).mean().dropna()
-                                agg_b = df_b.set_index(date_col)[selected_column].resample(freq_map[aggregation]).mean().dropna()
+                                agg_a = df_a.set_index(date_col)[selected_column].resample(freq_map[aggregation]).agg(agg_func).dropna()
+                                agg_b = df_b.set_index(date_col)[selected_column].resample(freq_map[aggregation]).agg(agg_func).dropna()
 
                                 label_a = f"Period A: {a_start.strftime('%b %d, %Y')} - {a_end.strftime('%b %d, %Y')}"
                                 label_b = f"Period B: {b_start.strftime('%b %d, %Y')} - {b_end.strftime('%b %d, %Y')}"
 
+                                offset_a = list(range(len(agg_a)))
+                                offset_b = list(range(len(agg_b)))
+                                date_fmt = '%b %d, %Y' if aggregation in ('Daily', 'Weekly') else '%b %Y'
+                                max_len = max(len(offset_a), len(offset_b), 1)
+
                                 fig = go.Figure()
-                                fig.add_trace(go.Scatter(x=list(range(len(agg_a))), y=agg_a.values, mode='lines+markers', name=label_a, line=dict(color='#1f77b4', width=3)))
-                                fig.add_trace(go.Scatter(x=list(range(len(agg_b))), y=agg_b.values, mode='lines+markers', name=label_b, line=dict(color='#ff7f0e', width=3)))
+                                fig.add_trace(go.Scatter(
+                                    x=offset_a, y=agg_a.values, mode='lines+markers', name=label_a,
+                                    line=dict(color='#1f77b4', width=3), xaxis='x',
+                                ))
+                                fig.add_trace(go.Scatter(
+                                    x=offset_b, y=agg_b.values, mode='lines+markers', name=label_b,
+                                    line=dict(color='#ff7f0e', width=3), xaxis='x2',
+                                ))
                                 fig.update_layout(
-                                    title=f"Benchmark Comparison: {selected_column}",
-                                    xaxis_title=f"{aggregation} Period Offset (0 = start of each period)",
-                                    yaxis_title=numeric_cols[selected_column], height=500, hovermode='x unified',
+                                    title=f"Benchmark Comparison: {selected_column} ({aggregation}, {agg_method})",
+                                    yaxis_title=numeric_cols[selected_column],
+                                    height=550,
+                                    hovermode='closest',
+                                    xaxis=dict(
+                                        title="Period A dates", side='bottom', tickmode='array',
+                                        tickvals=offset_a, ticktext=[d.strftime(date_fmt) for d in agg_a.index],
+                                        range=[-0.5, max_len - 0.5],
+                                    ),
+                                    xaxis2=dict(
+                                        title="Period B dates", side='top', overlaying='x', tickmode='array',
+                                        tickvals=offset_b, ticktext=[d.strftime(date_fmt) for d in agg_b.index],
+                                        range=[-0.5, max_len - 0.5],
+                                    ),
+                                    legend=dict(orientation='h', yanchor='bottom', y=1.12, xanchor='left', x=0),
+                                    margin=dict(t=100),
                                 )
                                 st.plotly_chart(fig, use_container_width=True)
+                                st.caption("Points are aligned by relative position within each period (1st day vs 1st day, "
+                                           "2nd vs 2nd, etc.) so you can compare trend shape. The bottom axis shows Period "
+                                           "A's actual dates; the top axis shows Period B's actual dates.")
 
                                 st.subheader("📊 Comparison Statistics")
                                 stat_df = pd.DataFrame({
@@ -1293,8 +1324,8 @@ else:
 
             st.divider()
             st.subheader("📈 Explore a Relationship")
-            st.write("Pick any two confirmed parameters to plot against each other.")
-            numeric_col_list = list(correlation_analyzer.get_numeric_data().columns)
+            st.write("Pick any two columns from your raw data to plot against each other (not limited to confirmed parameters).")
+            numeric_col_list = [c for c in df.columns if pd.to_numeric(df[c], errors='coerce').notna().sum() > 0]
             default_x = strong_corrs[0]['Variable 1'] if strong_corrs else numeric_col_list[0]
             default_y = strong_corrs[0]['Variable 2'] if strong_corrs else (numeric_col_list[1] if len(numeric_col_list) > 1 else numeric_col_list[0])
             sc1, sc2 = st.columns(2)
