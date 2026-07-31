@@ -106,6 +106,27 @@ st.markdown(f"""
         margin: 0 !important;
         font-size: 14px !important;
     }}
+    .hub-title-text {{
+        color: {VEOLIA['white']} !important;
+        font-size: 26px;
+        font-weight: 700;
+        margin: 0 0 4px 0;
+        line-height: 1.3;
+        font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
+    }}
+    .hub-subtitle-text {{
+        color: {VEOLIA['pale_blue']} !important;
+        margin: 0;
+        font-size: 14px;
+    }}
+    .hub-title-text-light {{
+        color: {VEOLIA['marine']} !important;
+        font-size: 26px;
+        font-weight: 700;
+        margin: 0 0 4px 0;
+        line-height: 1.3;
+        font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
+    }}
 
     /* --- Metrics (KPI cards) --- */
     [data-testid="stMetric"] {{
@@ -115,17 +136,33 @@ st.markdown(f"""
         border-radius: 8px;
         padding: 12px 14px 10px 14px;
         box-shadow: 0 1px 3px rgba(0,45,98,0.06);
+        min-height: 92px;
     }}
     [data-testid="stMetricLabel"] {{
         color: {VEOLIA['ink_light']} !important;
-        font-size: 12.5px !important;
+        font-size: 11.5px !important;
         font-weight: 600 !important;
         text-transform: uppercase;
         letter-spacing: 0.3px;
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        line-height: 1.3 !important;
+    }}
+    [data-testid="stMetricLabel"] p {{
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        line-height: 1.3 !important;
     }}
     [data-testid="stMetricValue"] {{
         color: {VEOLIA['marine']} !important;
         font-weight: 700 !important;
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        font-size: 1.5rem !important;
+        line-height: 1.25 !important;
     }}
 
     /* --- Tabs --- */
@@ -177,6 +214,24 @@ st.markdown(f"""
     section[data-testid="stSidebar"] input, section[data-testid="stSidebar"] textarea {{
         color: {VEOLIA['marine']} !important;
     }}
+    /* Uploaded-file chip: force a matched dark background + white text/icon pair so the
+       filename is never white-on-light or dark-on-dark, whatever Streamlit's default is. */
+    section[data-testid="stSidebar"] [data-testid="stFileUploaderFile"],
+    section[data-testid="stSidebar"] [data-testid="stFileUploaderFileName"] {{
+        background: rgba(255,255,255,0.14) !important;
+        border-radius: 6px;
+        padding: 4px 8px;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stFileUploaderFile"] * {{
+        color: {VEOLIA['white']} !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        white-space: normal !important;
+        word-break: break-word !important;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stFileUploaderFile"] svg {{
+        fill: {VEOLIA['white']} !important;
+    }}
 
     /* --- Dataframes --- */
     [data-testid="stDataFrame"] {{
@@ -213,7 +268,7 @@ with st.container():
         with hcol2:
             st.markdown(f"""
             <div style="padding-top:8px;">
-                <h1 style="color:{VEOLIA['marine']} !important; margin:0 0 4px 0;">🌊 AI-Powered WWTP Dewatering & Thickening Performance Analyzer</h1>
+                <div class="hub-title-text-light">🌊 AI-Powered WWTP Dewatering & Thickening Performance Analyzer</div>
                 <p style="color:{VEOLIA['ink_light']}; margin:0;">Fuzzy Parameter Detection | Confirm-Before-You-Analyze | Period A/B Benchmark | AI Recommendations</p>
             </div>
             """, unsafe_allow_html=True)
@@ -225,11 +280,20 @@ with st.container():
                 <div class="hub-wordmark-text">HUBGRADE</div>
             </div>
             <div class="hub-title-block">
-                <h1>🌊 AI-Powered WWTP Dewatering &amp; Thickening Performance Analyzer</h1>
-                <p>Fuzzy Parameter Detection · Confirm-Before-You-Analyze · Period A/B Benchmark · AI Recommendations</p>
+                <div class="hub-title-text">🌊 AI-Powered WWTP Dewatering &amp; Thickening Performance Analyzer</div>
+                <div class="hub-subtitle-text">Fuzzy Parameter Detection · Confirm-Before-You-Analyze · Period A/B Benchmark · AI Recommendations</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
+
+
+# Passed to every st.plotly_chart() call so each chart gets a working "download as PNG" button
+# in its toolbar, with a higher-res export than the default.
+PLOTLY_CONFIG = {
+    'displaylogo': False,
+    'toImageButtonOptions': {'format': 'png', 'scale': 2, 'filename': 'chart'},
+    'modeBarButtonsToAdd': ['toImage'],
+}
 
 
 def status_chip(status_text):
@@ -1586,7 +1650,7 @@ class ChartRenderer:
         return self._base_layout(fig, f"{title} ({unit})", unit)
 
 
-def render_kpi_grid(kpis, definitions, per_row=5):
+def render_kpi_grid(kpis, definitions, per_row=4):
     keys = list(definitions.keys())
     for i in range(0, len(keys), per_row):
         row_keys = keys[i:i + per_row]
@@ -1908,7 +1972,7 @@ else:
                         plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', font=dict(color=VEOLIA['marine']),
                         xaxis=dict(gridcolor='#E9EEF1'), yaxis=dict(gridcolor='#E9EEF1'),
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
                     stat_c1, stat_c2, stat_c3, stat_c4 = st.columns(4)
                     with stat_c1:
@@ -2020,7 +2084,7 @@ else:
                                     height=520, hovermode='closest', margin=dict(b=110),
                                     plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', font=dict(color=VEOLIA['marine']),
                                 )
-                                st.plotly_chart(fig, use_container_width=True)
+                                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
                                 st.subheader("📊 Comparison Statistics")
                                 stat_df = pd.DataFrame({
@@ -2055,7 +2119,7 @@ else:
             st.subheader("📊 Correlation Heatmap")
             fig_heatmap = correlation_analyzer.create_correlation_heatmap()
             if fig_heatmap:
-                st.plotly_chart(fig_heatmap, use_container_width=True)
+                st.plotly_chart(fig_heatmap, use_container_width=True, config=PLOTLY_CONFIG)
 
             st.divider()
             st.subheader("🔍 Strong Correlations (|r| ≥ 0.7)")
@@ -2089,7 +2153,7 @@ else:
                 st.info("Pick two different parameters to see a scatter plot.")
             else:
                 fig_scatter = correlation_analyzer.create_scatter_plot(x_var, y_var)
-                st.plotly_chart(fig_scatter, use_container_width=True, key="interactive_scatter")
+                st.plotly_chart(fig_scatter, use_container_width=True, key="interactive_scatter", config=PLOTLY_CONFIG)
 
     # ============================================================
     # TAB 5: DEWATERING
@@ -2104,7 +2168,7 @@ else:
             poly_unit = detected_params['polymer']['unit']
             st.caption(f"Column used: **{poly_col}**")
             fig = chart_renderer.render_line_with_ma(poly_col, poly_unit, "Active Polymer Dose", threshold_excellent=12, threshold_good=15)
-            st.plotly_chart(fig, use_container_width=True, key="poly_chart")
+            st.plotly_chart(fig, use_container_width=True, key="poly_chart", config=PLOTLY_CONFIG)
             render_footnote('polymer', ' lbs/ton')
 
         if detected_params.get('polymer_raw', {}).get('column'):
@@ -2113,7 +2177,7 @@ else:
             poly_raw_unit = detected_params['polymer_raw']['unit']
             st.caption(f"Column used: **{poly_raw_col}**")
             fig = chart_renderer.render_line_with_ma(poly_raw_col, poly_raw_unit, "Raw/Neat Polymer Dose")
-            st.plotly_chart(fig, use_container_width=True, key="poly_raw_chart")
+            st.plotly_chart(fig, use_container_width=True, key="poly_raw_chart", config=PLOTLY_CONFIG)
             st.caption("ℹ️ No fixed benchmark — this is product (as-delivered) basis, which varies by polymer concentration. "
                        "Compare against the Active Polymer Dose above and your product's spec sheet.")
 
@@ -2123,7 +2187,7 @@ else:
             cake_unit = detected_params['cake_quality']['unit']
             st.caption(f"Column used: **{cake_col}**")
             fig = chart_renderer.render_line_with_ma(cake_col, cake_unit, "Cake Quality", threshold_excellent=25, threshold_good=20)
-            st.plotly_chart(fig, use_container_width=True, key="cake_chart")
+            st.plotly_chart(fig, use_container_width=True, key="cake_chart", config=PLOTLY_CONFIG)
             render_footnote('cake_quality', '%')
 
         if detected_params.get('dry_tons', {}).get('column') and detected_params.get('wet_tons', {}).get('column'):
@@ -2132,7 +2196,7 @@ else:
             wet_col = detected_params['wet_tons']['column']
             st.caption(f"Columns used: **{dry_col}** / **{wet_col}**")
             fig = chart_renderer.render_ratio(dry_col, wet_col, "Ratio", "Dry/Wet Ratio", threshold_excellent=0.25, threshold_good=0.20)
-            st.plotly_chart(fig, use_container_width=True, key="ratio_chart")
+            st.plotly_chart(fig, use_container_width=True, key="ratio_chart", config=PLOTLY_CONFIG)
             render_footnote('dry_wet_ratio')
 
         if detected_params.get('trucks', {}).get('column'):
@@ -2141,7 +2205,7 @@ else:
             truck_unit = detected_params['trucks']['unit']
             st.caption(f"Column used: **{truck_col}**")
             fig = chart_renderer.render_bar_with_ma(truck_col, truck_unit, "Daily Sludge Trucks")
-            st.plotly_chart(fig, use_container_width=True, key="truck_chart")
+            st.plotly_chart(fig, use_container_width=True, key="truck_chart", config=PLOTLY_CONFIG)
             st.caption("ℹ️ No fixed industry benchmark for truck counts - fewer trucks generally indicates better dewatering "
                        "(higher cake solids = less volume to haul). Compare against your own historical baseline.")
 
@@ -2161,7 +2225,7 @@ else:
             uf_unit = detected_params['thickener_underflow']['unit']
             st.caption(f"Column used: **{uf_col}**")
             fig = chart_renderer.render_line_with_ma(uf_col, uf_unit, "Underflow Concentration", threshold_excellent=5, threshold_good=3)
-            st.plotly_chart(fig, use_container_width=True, key="thick_uf_chart")
+            st.plotly_chart(fig, use_container_width=True, key="thick_uf_chart", config=PLOTLY_CONFIG)
             render_footnote('thickener_underflow', '%')
 
         if detected_params.get('thickener_overflow', {}).get('column'):
@@ -2170,7 +2234,7 @@ else:
             of_unit = detected_params['thickener_overflow']['unit']
             st.caption(f"Column used: **{of_col}** (unit: {of_unit})")
             fig = chart_renderer.render_line_with_ma(of_col, of_unit, "Overflow TSS", threshold_excellent=500, threshold_good=1000)
-            st.plotly_chart(fig, use_container_width=True, key="thick_of_chart")
+            st.plotly_chart(fig, use_container_width=True, key="thick_of_chart", config=PLOTLY_CONFIG)
             if of_unit in ('mg/L', 'NTU'):
                 render_footnote('thickener_overflow', f' {of_unit}')
             else:
@@ -2182,7 +2246,7 @@ else:
             gbt_uf_unit = detected_params['gbt_underflow']['unit']
             st.caption(f"Column used: **{gbt_uf_col}**")
             fig = chart_renderer.render_line_with_ma(gbt_uf_col, gbt_uf_unit, "GBT Underflow Concentration", threshold_excellent=8, threshold_good=5)
-            st.plotly_chart(fig, use_container_width=True, key="gbt_uf_chart")
+            st.plotly_chart(fig, use_container_width=True, key="gbt_uf_chart", config=PLOTLY_CONFIG)
             render_footnote('gbt_underflow', '%')
 
         if detected_params.get('gbt_overflow', {}).get('column'):
@@ -2191,7 +2255,7 @@ else:
             gbt_of_unit = detected_params['gbt_overflow']['unit']
             st.caption(f"Column used: **{gbt_of_col}** (unit: {gbt_of_unit})")
             fig = chart_renderer.render_line_with_ma(gbt_of_col, gbt_of_unit, "GBT Overflow TSS", threshold_excellent=300, threshold_good=500)
-            st.plotly_chart(fig, use_container_width=True, key="gbt_of_chart")
+            st.plotly_chart(fig, use_container_width=True, key="gbt_of_chart", config=PLOTLY_CONFIG)
             if gbt_of_unit in ('mg/L', 'NTU'):
                 render_footnote('gbt_overflow', f' {gbt_of_unit}')
             else:
@@ -2203,7 +2267,7 @@ else:
             th_poly_unit = detected_params['gbt_polymer']['unit']
             st.caption(f"Column used: **{th_poly_col}**")
             fig = chart_renderer.render_line_with_ma(th_poly_col, th_poly_unit, "Thickening Polymer Dose", threshold_excellent=2, threshold_good=6)
-            st.plotly_chart(fig, use_container_width=True, key="thick_poly_chart")
+            st.plotly_chart(fig, use_container_width=True, key="thick_poly_chart", config=PLOTLY_CONFIG)
             st.caption("📊 Typical benchmark — 🟢 2-6 lbs active/ton DS for GBT/gravity thickening. DAF systems often run higher; treat as a starting reference, not a hard limit.")
 
         if not any(detected_params.get(k, {}).get('column') for k in ['thickener_underflow', 'thickener_overflow', 'gbt_underflow', 'gbt_overflow']):
