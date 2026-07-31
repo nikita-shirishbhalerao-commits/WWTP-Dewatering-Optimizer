@@ -331,6 +331,63 @@ def categorize_param(key):
     return 'Dewatering'
 
 
+# For parameters where equipment identity is everything (e.g. "which centrifuge's run hours is this?"),
+# fuzzy text similarity alone isn't reliable - "BFP Hours" and "Centrifuge 1 Hours" both contain "hours"
+# and can score similarly. REQUIRED_TOKENS makes a column ineligible for a slot unless it contains at
+# least one of these distinguishing substrings - a hard gate, checked before any fuzzy scoring happens.
+REQUIRED_TOKENS = {
+    'centrifuge_1_hours': ['centrifuge 1', 'centrifuge1'],
+    'centrifuge_2_hours': ['centrifuge 2', 'centrifuge2'],
+    'centrifuge_3_hours': ['centrifuge 3', 'centrifuge3'],
+    'bfp_hours': ['bfp', 'belt filter press', 'belt press'],
+    'rotary_press_hours': ['rotary press', 'rotary'],
+    'gbt_1_hours': ['gbt 1', 'gbt1'],
+    'gbt_2_hours': ['gbt 2', 'gbt2'],
+    'gbt_3_hours': ['gbt 3', 'gbt3'],
+    'bowl_speed': ['bowl', 'centrifuge'],
+    'gbt_belt_speed': ['gbt', 'belt speed', 'belt thickener speed'],
+}
+
+# EXCLUDE_TOKENS is the complementary check: disqualify a column outright if it contains a token that
+# marks it as clearly belonging to a *different* process (dewatering vs. thickening) or different
+# specific equipment, even if it would otherwise score well on generic keywords like "polymer" or "hours".
+EXCLUDE_TOKENS = {
+    'polymer': ['gbt', 'thickener', 'thickening', 'daf'],
+    'polymer_raw': ['gbt', 'thickener', 'thickening', 'daf'],
+    'polymer_cost': ['gbt', 'thickener', 'thickening', 'daf'],
+    'cake_quality': ['gbt', 'thickener', 'thickening'],
+    'dry_tons': ['gbt', 'thickener', 'thickening'],
+    'wet_tons': ['gbt', 'thickener', 'thickening'],
+    'trucks': ['gbt', 'thickener', 'thickening'],
+    'filtrate_turbidity': ['gbt', 'thickener', 'thickening'],
+    'filtrate_flow': ['gbt', 'thickener', 'thickening'],
+    'dewatering_feed': ['gbt', 'thickener', 'thickening'],
+    'dewatering_run_hours': ['gbt', 'thickener', 'thickening'],
+    'centrifuge_1_hours': ['gbt', 'thickener', 'thickening', 'bfp', 'rotary'],
+    'centrifuge_2_hours': ['gbt', 'thickener', 'thickening', 'bfp', 'rotary'],
+    'centrifuge_3_hours': ['gbt', 'thickener', 'thickening', 'bfp', 'rotary'],
+    'bfp_hours': ['gbt', 'thickener', 'thickening', 'centrifuge', 'rotary'],
+    'rotary_press_hours': ['gbt', 'thickener', 'thickening', 'centrifuge', 'bfp'],
+    'bowl_speed': ['gbt', 'thickener', 'thickening'],
+    'thickener_feed': ['centrifuge', 'bfp', 'rotary press'],
+    'thickener_underflow': ['centrifuge', 'bfp', 'rotary press'],
+    'thickener_overflow': ['centrifuge', 'bfp', 'rotary press'],
+    'thickener_torque': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_feed': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_underflow': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_overflow': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_belt_speed': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_polymer': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_polymer_gpd': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_polymer_cost': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_1_hours': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_2_hours': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_3_hours': ['centrifuge', 'bfp', 'rotary press'],
+    'thickening_run_hours': ['centrifuge', 'bfp', 'rotary press'],
+    'daf_air_flow': ['centrifuge', 'bfp', 'rotary press'],
+}
+
+
 # ============================================================
 # FUZZY PARAMETER DETECTOR
 # ============================================================
@@ -349,13 +406,25 @@ class FuzzyParameterDetector:
             s = s.replace(ch, ' ')
         return ' '.join(s.split())
 
-    def find_parameters(self, keyword_groups, threshold=55, expected_units=None):
+    def find_parameters(self, keyword_groups, threshold=55, expected_units=None, required_tokens=None, exclude_tokens=None):
         expected_units = expected_units or {}
+        required_tokens = required_tokens or {}
+        exclude_tokens = exclude_tokens or {}
         results = {}
         for param_name, keywords in keyword_groups.items():
             allowed_units = expected_units.get(param_name)
+            req_tokens = [self._clean(t) for t in required_tokens.get(param_name, [])]
+            excl_tokens = [self._clean(t) for t in exclude_tokens.get(param_name, [])]
             best_col, best_score = None, 0
             for col, col_clean in zip(self.columns, self.clean_columns):
+                # Hard gates: a column must contain a required token (if any are defined for this
+                # parameter) and must NOT contain an exclude token, before it's even allowed to
+                # compete on fuzzy text similarity. This is what stops e.g. "BFP Hours" from being
+                # picked for the "Centrifuge 1 Hours" slot just because both mention "hours".
+                if req_tokens and not any(t in col_clean for t in req_tokens):
+                    continue
+                if excl_tokens and any(t in col_clean for t in excl_tokens):
+                    continue
                 col_best = 0
                 for kw in keywords:
                     kw_clean = self._clean(kw)
@@ -451,7 +520,8 @@ def load_wwtp_csv(uploaded_file):
 
 def detect_parameters(df, threshold=55):
     detector = FuzzyParameterDetector(df.columns)
-    return detector.find_parameters(PARAMETER_KEYWORDS, threshold=threshold, expected_units=EXPECTED_UNIT_FAMILIES)
+    return detector.find_parameters(PARAMETER_KEYWORDS, threshold=threshold, expected_units=EXPECTED_UNIT_FAMILIES,
+                                     required_tokens=REQUIRED_TOKENS, exclude_tokens=EXCLUDE_TOKENS)
 
 
 def render_mapping_editor(detected_params, df_columns, key_prefix):
