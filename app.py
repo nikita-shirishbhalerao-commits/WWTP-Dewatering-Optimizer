@@ -70,27 +70,38 @@ def render_footnote(metric_key, unit="", fallback=None):
 # ============================================================
 DEWATERING_KPI_DEFINITIONS = {
     'cake_solids': {'name': 'Cake Solids Content (%)', 'description': 'Dry solids percentage in dewatered biosolids. Target varies by equipment: 18-25% belt press, 20-30% centrifuge.'},
-    'polymer_consumption': {'name': 'Polymer Consumption (lbs/ton DS)', 'description': 'Conditioning chemical usage per ton of dry solids processed.'},
-    'dewatering_throughput': {'name': 'Dewatering Throughput (lbs DS/day)', 'description': 'Daily dry solids processing capacity.'},
-    'filtrate_turbidity': {'name': 'Filtrate Clarity', 'description': 'Clarity of return liquor/centrate. Lower = better solids capture. Rating only applied if a recognizable NTU or mg/L unit was detected.'},
-    'solids_recovery': {'name': 'Solids Recovery Rate (%)', 'description': 'Percentage of incoming solids captured in cake vs. lost to recycle stream.'},
-    'cake_production_rate': {'name': 'Cake Production Rate (lbs/hour)', 'description': 'Dewatered biosolids output rate.'},
-    'filtrate_flow_rate': {'name': 'Filtrate Flow Rate (gpm)', 'description': 'Return liquor flow rate from dewatering.'},
-    'polymer_cost_per_lb': {'name': 'Polymer Cost per Pound of Solids ($/lb DS)', 'description': 'Economic indicator of chemical efficiency.'},
     'cake_moisture': {'name': 'Cake Moisture Content (%)', 'description': 'Inverse of cake solids content.'},
+    'dry_wet_ratio': {'name': 'Dry/Wet Ratio', 'description': 'Dry solids produced relative to total wet cake mass hauled - a direct measure of dewatering efficiency.'},
+    'active_polymer_dose': {'name': 'Active Polymer Dose (lbs active/ton DS)', 'description': 'Conditioning chemical usage per ton of dry solids, on an active (post-dilution/activity-adjusted) basis. This is the standard basis for the 5-15 lbs/ton benchmark.'},
+    'raw_polymer_dose': {'name': 'Raw/Neat Polymer Dose (lbs product/ton DS)', 'description': 'As-delivered product dose per ton of dry solids, before adjusting for % activity. Varies by product concentration, so no universal benchmark applies.'},
+    'polymer_activity_pct': {'name': 'Polymer Product Activity (%)', 'description': 'Active dose ÷ raw/neat dose. A rough check on whether your active-basis dose lines up with the product spec sheet.'},
+    'polymer_cost_per_lb': {'name': 'Polymer Cost per Pound of Solids ($/lb DS)', 'description': 'Economic indicator of chemical efficiency.'},
+    'dewatering_throughput': {'name': 'Dewatering Throughput (lbs DS/day)', 'description': 'Daily dry solids processing capacity.'},
+    'cake_production_rate': {'name': 'Cake Production Rate (lbs/hour)', 'description': 'Dewatered biosolids output rate.'},
+    'dewatering_feed_rate': {'name': 'Dewatering Feed Rate (gpm)', 'description': 'Sludge feed flow into the dewatering equipment.'},
+    'filtrate_turbidity': {'name': 'Filtrate Clarity', 'description': 'Clarity of return liquor/centrate. Lower = better solids capture. Rating only applied if a recognizable NTU or mg/L unit was detected.'},
+    'filtrate_flow_rate': {'name': 'Filtrate Flow Rate (gpm)', 'description': 'Return liquor flow rate from dewatering.'},
+    'solids_recovery': {'name': 'Solids Recovery Rate (%)', 'description': 'Percentage of incoming solids captured in cake vs. lost to recycle stream.'},
+    'hauling_cost_per_wet_ton': {'name': 'Hauling Cost per Wet Ton ($/wet ton)', 'description': 'Disposal/hauling economics normalized per wet ton of cake.'},
     'equipment_availability': {'name': 'Dewatering Equipment Availability (%)', 'description': 'Uptime percentage of dewatering equipment.'},
 }
 
 THICKENING_KPI_DEFINITIONS = {
     'thickened_solids': {'name': 'Thickened Solids Concentration (%)', 'description': 'Dry solids percentage achieved. Target 4-8% gravity, 6-12% DAF.'},
     'underflow_lbs_gal': {'name': 'Underflow Solids Concentration (lbs DS/gal)', 'description': 'Underflow solids expressed as mass per gallon; higher = less downstream load.'},
+    'feed_solids_concentration': {'name': 'Feed Solids Concentration (%)', 'description': 'Incoming sludge solids strength ahead of thickening - useful context for interpreting the other thickening KPIs.'},
     'overflow_turbidity': {'name': 'Overflow Clarity', 'description': 'Clarified supernatant quality. Lower = better solids separation. Rating only applied if a recognizable NTU or mg/L unit was detected.'},
     'thickening_throughput': {'name': 'Thickening Throughput (lbs DS/day)', 'description': 'Estimated daily solids processing capacity.'},
-    'solids_capture_efficiency': {'name': 'Solids Capture Efficiency (%)', 'description': 'Percentage of incoming solids retained in thickened sludge.'},
     'underflow_production_rate': {'name': 'Underflow Production Rate (lbs/hour)', 'description': 'Thickened sludge output rate.'},
     'overflow_flow_rate': {'name': 'Overflow Flow Rate (gpm)', 'description': 'Return liquor flow rate from thickening.'},
+    'hydraulic_loading_rate': {'name': 'Hydraulic Loading Rate (gpd/sq ft)', 'description': 'Feed flow relative to thickener surface area - a standard design/operating check alongside solids loading.'},
     'solids_loading_rate': {'name': 'Solids Loading Rate (lbs DS/day/sq ft)', 'description': 'Thickener surface-area efficiency.'},
-    'air_polymer_consumption': {'name': 'Air/Polymer Consumption (lbs/ton DS)', 'description': 'Thickening chemical (or DAF air) usage per ton dry solids.'},
+    'retention_time': {'name': 'Retention Time (hours)', 'description': 'Tank volume ÷ feed flow. Applies to gravity thickeners (tank-based); not meaningful for GBTs, which are continuous mechanical units.'},
+    'thickening_polymer_dose': {'name': 'Thickening Polymer Dose (lbs active/ton DS)', 'description': 'Conditioning polymer usage ahead of/at the thickener, per ton of dry solids.'},
+    'daf_air_to_solids_ratio': {'name': 'DAF Air-to-Solids Ratio', 'description': 'Applies only to DAF thickeners. Requires calibrated air mass flow and solids mass flow instrumentation most spreadsheets don\'t log, so this is usually reported as insufficient data rather than guessed at.'},
+    'solids_capture_efficiency': {'name': 'Solids Capture Efficiency (%)', 'description': 'Percentage of incoming solids retained in thickened sludge.'},
+    'rake_torque_monitor': {'name': 'Rake Torque (Nm)', 'description': 'Gravity thickener rake drive torque. Rising trend can indicate rag/solids buildup - compare against the manufacturer-rated limit.'},
+    'belt_speed_monitor': {'name': 'GBT Belt Speed', 'description': 'Gravity belt thickener belt speed trend - useful context alongside underflow/overflow quality.'},
     'thickening_equipment_availability': {'name': 'Thickening Equipment Availability (%)', 'description': 'Uptime percentage of thickening equipment.'},
 }
 
@@ -105,8 +116,15 @@ RECOMMENDATION_TEMPLATES = {
         'additional_data': ['Feed sludge %TS and VS%', 'Equipment speed/torque logs', 'Polymer type and dilution ratio'],
         'timeline': '1-2 weeks', 'risk': 'Low - improves operation',
     },
-    'polymer_consumption': {
-        'issue': 'Polymer usage is above the efficient operating range, increasing chemical costs.',
+    'dry_wet_ratio': {
+        'issue': 'Dewatering efficiency (dry solids produced relative to total wet cake mass) is below target, meaning more wet cake mass is being hauled per ton of dry solids captured.',
+        'root_causes': ['Cake solids content too low (this moves together with the Cake Solids KPI)', 'Polymer dose/type not optimized', 'Equipment speed or feed rate not optimized'],
+        'actions': ['See the Cake Solids and Polymer recommendations - dry/wet ratio tracks cake solids directly', 'Re-run a polymer jar test', 'Review equipment operating parameters'],
+        'additional_data': ['See Cake Solids KPI'],
+        'timeline': '1-2 weeks', 'risk': 'Low',
+    },
+    'active_polymer_dose': {
+        'issue': 'Active polymer usage is above the efficient operating range, increasing chemical costs.',
         'root_causes': ['Bowl/belt speed suboptimal', 'Feed rate too high', 'Polymer type/concentration mismatch with sludge', 'Equipment wear', 'Sludge characteristics changed (higher solids, harder to dewater)'],
         'actions': ['Conduct a polymer jar test to re-optimize dose and product', 'Adjust equipment speed incrementally', 'Reduce feed rate 10-15% and monitor cake quality', 'Inspect equipment for wear'],
         'additional_data': ['Sludge %TS and VS%', 'Equipment RPM/belt speed', 'Polymer type and active content'],
@@ -175,6 +193,13 @@ RECOMMENDATION_TEMPLATES = {
         'additional_data': ['Thickener design capacity'],
         'timeline': 'Ongoing', 'risk': 'Low',
     },
+    'hydraulic_loading_rate': {
+        'issue': 'Hydraulic loading rate on the thickener surface area is outside the typical design range, which can affect solids capture and underflow quality.',
+        'root_causes': ['Feed flow too high/low relative to available surface area', 'Flow not evenly distributed across multiple units if present'],
+        'actions': ['Review feed flow against thickener design capacity', 'Balance flow across parallel units if available', 'Confirm the surface area entered in Plant Information is correct'],
+        'additional_data': ['Thickener design hydraulic capacity'],
+        'timeline': '2-4 weeks', 'risk': 'Low',
+    },
     'solids_loading_rate': {
         'issue': 'Solids loading rate on the thickener surface area is outside the recommended range.',
         'root_causes': ['Feed rate too high relative to available surface area', 'Underflow concentration lower than expected, increasing load'],
@@ -182,8 +207,15 @@ RECOMMENDATION_TEMPLATES = {
         'additional_data': ['Confirm thickener surface area entered in Plant Information'],
         'timeline': '2-4 weeks', 'risk': 'Low',
     },
-    'air_polymer_consumption': {
-        'issue': 'Thickening polymer (or air, for DAF) consumption is above the typical benchmark range.',
+    'retention_time': {
+        'issue': 'Retention time in the gravity thickener is below the typical design range, which can limit achievable underflow concentration.',
+        'root_causes': ['Feed flow too high for tank volume', 'Tank volume entered may not reflect actual operating volume (e.g. sludge blanket level)'],
+        'actions': ['Reduce feed rate if possible', 'Verify the tank volume entered in Plant Information', 'Consider distributing flow to additional units if available'],
+        'additional_data': ['Actual operating sludge blanket depth/volume'],
+        'timeline': '2-4 weeks', 'risk': 'Low',
+    },
+    'thickening_polymer_dose': {
+        'issue': 'Thickening polymer consumption is above the typical benchmark range.',
         'root_causes': ['Polymer dose not optimized for current sludge characteristics', 'Poor mixing efficiency', 'Feed rate too high'],
         'actions': ['Run a polymer jar test to re-optimize dose', 'Improve polymer mixing/injection point', 'Review feed rate'],
         'additional_data': ['Sludge characteristics ahead of thickening'],
@@ -199,11 +231,12 @@ RECOMMENDATION_TEMPLATES = {
 }
 
 PRIORITY_MAP = {
-    'cake_solids': '🔴 CRITICAL', 'polymer_consumption': '🟠 HIGH', 'filtrate_turbidity': '🟡 MEDIUM',
-    'solids_recovery': '🟠 HIGH', 'cake_production_rate': '🟡 MEDIUM', 'equipment_availability': '🟠 HIGH',
-    'cake_moisture': '🟡 MEDIUM', 'polymer_cost_per_lb': '🟡 MEDIUM', 'thickened_solids': '🟠 HIGH',
-    'overflow_turbidity': '🟡 MEDIUM', 'underflow_production_rate': '🟡 MEDIUM', 'solids_loading_rate': '🟡 MEDIUM',
-    'air_polymer_consumption': '🟡 MEDIUM', 'thickening_equipment_availability': '🟠 HIGH',
+    'cake_solids': '🔴 CRITICAL', 'dry_wet_ratio': '🟡 MEDIUM', 'active_polymer_dose': '🟠 HIGH',
+    'filtrate_turbidity': '🟡 MEDIUM', 'solids_recovery': '🟠 HIGH', 'cake_production_rate': '🟡 MEDIUM',
+    'equipment_availability': '🟠 HIGH', 'cake_moisture': '🟡 MEDIUM', 'polymer_cost_per_lb': '🟡 MEDIUM',
+    'thickened_solids': '🟠 HIGH', 'overflow_turbidity': '🟡 MEDIUM', 'underflow_production_rate': '🟡 MEDIUM',
+    'hydraulic_loading_rate': '🟡 MEDIUM', 'solids_loading_rate': '🟡 MEDIUM', 'retention_time': '🟡 MEDIUM',
+    'thickening_polymer_dose': '🟡 MEDIUM', 'thickening_equipment_availability': '🟠 HIGH',
 }
 
 # ============================================================
@@ -212,6 +245,7 @@ PRIORITY_MAP = {
 PARAMETER_KEYWORDS = {
     'polymer': ['act poly dry ton', 'lbs act poly dry ton', 'active polymer dry ton', 'polymer dose lbs ton',
                 'active poly lbs per dt', 'centrifuge act poly dry ton', 'active polymer', 'polymer dose', 'poly dose lbs/ton'],
+    'polymer_raw': ['raw polymer dry ton', 'neat poly dry ton', 'raw poly per dry ton', 'neat polymer dry ton', 'raw polymer product dose', 'neat poly/dry ton'],
     'cake_quality': ['cake solids', 'cake percent', 'cake quality', 'percent solids cake', 'dewatered solids', 'cake ts', 'cake dry solids', 'cake avg'],
     'centrifuge_1_hours': ['centrifuge 1 hours', 'c1 run hours', 'centrifuge 1 runtime'],
     'centrifuge_2_hours': ['centrifuge 2 hours', 'c2 run hours', 'centrifuge 2 runtime'],
@@ -225,6 +259,7 @@ PARAMETER_KEYWORDS = {
     'effluent_flow': ['effluent flow', 'plant effluent', 'outflow mgd', 'effluent mgd'],
     'filtrate_turbidity': ['filtrate turbidity ntu', 'centrate turbidity ntu', 'filtrate ntu', 'centrate ntu'],
     'filtrate_flow': ['filtrate flow gpm', 'centrate flow gpm', 'filtrate gpm', 'centrate gpm', 'return flow dewatering'],
+    'dewatering_feed': ['centrifuge feed gpm', 'dewatering feed rate', 'feed rate to centrifuge', 'bfp feed gpm', 'dewatering influent flow'],
     'feed_solids': ['feed solids percent', 'influent solids concentration', 'feed ts percent', 'raw sludge solids percent'],
     'thickener_feed': ['thickener feed gpm', 'gravity thickener feed', 'thickener inlet flow', 'feed rate gpm'],
     'thickener_underflow': ['thickener underflow percent', 'gravity thickener underflow', 'underflow ts', 'underflow solids', 'thickener underflow solids'],
@@ -235,6 +270,7 @@ PARAMETER_KEYWORDS = {
     'gbt_overflow': ['gbt overflow tss', 'gravity belt thickener overflow', 'belt thickener overflow tss'],
     'gbt_belt_speed': ['gbt belt speed', 'gravity belt speed', 'belt thickener speed'],
     'gbt_polymer': ['gbt polymer dose', 'gravity belt polymer dose', 'belt thickener polymer', 'daf polymer', 'thickening polymer'],
+    'daf_air_flow': ['daf air flow', 'saturator air flow', 'recycle air scfm', 'air flow scfm'],
     'bowl_speed': ['bowl speed rpm', 'centrifuge bowl speed', 'centrifuge rpm'],
     'polymer_cost': ['polymer cost dollars', 'polymer price', 'polymer dollar cost', 'chemical cost polymer'],
     'hauling_cost': ['hauling cost dollars', 'truck hauling cost', 'disposal hauling cost'],
@@ -245,6 +281,7 @@ PARAMETER_KEYWORDS = {
 
 EXPECTED_UNIT_FAMILIES = {
     'polymer': {'lbs/ton'},
+    'polymer_raw': {'lbs/ton'},
     'cake_quality': {'%'},
     'dry_tons': {'Dry Tons', 'Tons'},
     'wet_tons': {'Wet Tons', 'Tons'},
@@ -253,6 +290,7 @@ EXPECTED_UNIT_FAMILIES = {
     'effluent_flow': {'MGD', 'GPM', 'GPD'},
     'filtrate_turbidity': {'NTU', 'mg/L'},
     'filtrate_flow': {'GPM', 'MGD', 'GPD'},
+    'dewatering_feed': {'GPM', 'MGD', 'GPD'},
     'feed_solids': {'%'},
     'thickener_feed': {'GPM', 'MGD', 'GPD'},
     'thickener_underflow': {'%'},
@@ -274,7 +312,7 @@ EXPECTED_UNIT_FAMILIES = {
 
 
 def categorize_param(key):
-    if key.startswith('gbt') or key.startswith('thickener') or key == 'thickening_run_hours':
+    if key.startswith('gbt') or key.startswith('thickener') or key in ('thickening_run_hours', 'daf_air_flow'):
         return 'Thickening'
     if key in ('influent_flow', 'effluent_flow'):
         return 'Flow'
@@ -630,43 +668,33 @@ class KPICalculator:
             k['cake_solids'] = self._insufficient(['Cake solids / cake quality (%) column'])
             k['cake_moisture'] = self._insufficient(['Cake solids / cake quality (%) column'])
 
-        poly = self._col('polymer')
         dry = self._col('dry_tons')
-        if poly is not None:
-            v = poly.mean()
-            k['polymer_consumption'] = {'value': v, 'unit': 'lbs/ton', 'target': '5-15 lbs/ton DS', 'status': self._status_range(v, 5, 15)}
+        wet = self._col('wet_tons')
+        if dry is not None and wet is not None and wet.mean() > 0:
+            ratio = dry.mean() / wet.mean()
+            k['dry_wet_ratio'] = {'value': ratio, 'unit': '', 'target': '≥0.25 (excellent), 0.20-0.25 (good)', 'status': self._status_lower(ratio, 0.20)}
         else:
-            k['polymer_consumption'] = self._insufficient(['Polymer dose (lbs/ton) column'])
+            k['dry_wet_ratio'] = self._insufficient(['Dry tons and Wet tons columns (both, with nonzero wet tons)'])
 
-        if dry is not None:
-            throughput = dry.mean() * 2000
-            k['dewatering_throughput'] = {'value': throughput, 'unit': 'lbs DS/day', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational'}
-            cake_rate = throughput / 24
-            k['cake_production_rate'] = {'value': cake_rate, 'unit': 'lbs/hour', 'target': '500-2,000 lbs/hour', 'status': self._status_range(cake_rate, 500, 2000)}
+        poly_active = self._col('polymer')
+        poly_raw = self._col('polymer_raw')
+        if poly_active is not None:
+            v = poly_active.mean()
+            k['active_polymer_dose'] = {'value': v, 'unit': 'lbs/ton', 'target': '5-15 lbs active/ton DS', 'status': self._status_range(v, 5, 15)}
         else:
-            k['dewatering_throughput'] = self._insufficient(['Dry tons / dry solids column'])
-            k['cake_production_rate'] = self._insufficient(['Dry tons / dry solids column'])
+            k['active_polymer_dose'] = self._insufficient(['Active polymer dose (lbs active/ton DS) column'])
 
-        filt_turb = self._col('filtrate_turbidity')
-        if filt_turb is not None:
-            unit = self.dp['filtrate_turbidity']['unit']
-            k['filtrate_turbidity'] = self._clarity_kpi(filt_turb.mean(), unit, ntu_target=10, mgl_target=500)
+        if poly_raw is not None:
+            v = poly_raw.mean()
+            k['raw_polymer_dose'] = {'value': v, 'unit': 'lbs/ton', 'target': 'Varies by product - no universal benchmark', 'status': 'ℹ️ Informational — depends on your polymer product\'s % activity'}
         else:
-            k['filtrate_turbidity'] = self._insufficient(['Filtrate/centrate turbidity column - none of your columns matched this'])
+            k['raw_polymer_dose'] = self._insufficient(['Raw/neat polymer dose (lbs product/ton DS) column'])
 
-        feed_solids = self._col('feed_solids')
-        if dry is not None and feed_solids is not None and feed_solids.mean() > 0:
-            recovery = min((dry.mean() / feed_solids.mean()) * 100, 100)
-            k['solids_recovery'] = {'value': recovery, 'unit': '%', 'target': '>95%', 'status': self._status_lower(recovery, 95)}
+        if poly_active is not None and poly_raw is not None and poly_raw.mean() > 0:
+            activity = (poly_active.mean() / poly_raw.mean()) * 100
+            k['polymer_activity_pct'] = {'value': activity, 'unit': '%', 'target': 'Compare to product spec sheet', 'status': 'ℹ️ Informational'}
         else:
-            k['solids_recovery'] = self._insufficient(['Influent/feed solids loading (tons or lbs DS) column - not detected in your data'])
-
-        filt_flow = self._col('filtrate_flow')
-        if filt_flow is not None:
-            v = filt_flow.mean()
-            k['filtrate_flow_rate'] = {'value': v, 'unit': 'gpm', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational'}
-        else:
-            k['filtrate_flow_rate'] = self._insufficient(['Filtrate/centrate flow rate (gpm) column'])
+            k['polymer_activity_pct'] = self._insufficient(['Both active and raw/neat polymer dose columns (to compute % activity)'])
 
         cost_col = self.dp.get('polymer_cost', {}).get('column')
         dry_col = self.dp.get('dry_tons', {}).get('column')
@@ -681,6 +709,55 @@ class KPICalculator:
                 k['polymer_cost_per_lb'] = self._insufficient(['Polymer cost ($) and dry tons columns (valid paired data)'])
         else:
             k['polymer_cost_per_lb'] = self._insufficient(['Polymer cost ($) column'])
+
+        if dry is not None:
+            throughput = dry.mean() * 2000
+            k['dewatering_throughput'] = {'value': throughput, 'unit': 'lbs DS/day', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational'}
+            cake_rate = throughput / 24
+            k['cake_production_rate'] = {'value': cake_rate, 'unit': 'lbs/hour', 'target': '500-2,000 lbs/hour', 'status': self._status_range(cake_rate, 500, 2000)}
+        else:
+            k['dewatering_throughput'] = self._insufficient(['Dry tons / dry solids column'])
+            k['cake_production_rate'] = self._insufficient(['Dry tons / dry solids column'])
+
+        dfeed = self._col('dewatering_feed')
+        if dfeed is not None:
+            k['dewatering_feed_rate'] = {'value': dfeed.mean(), 'unit': 'gpm', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational'}
+        else:
+            k['dewatering_feed_rate'] = self._insufficient(['Dewatering feed rate (gpm) column, e.g. centrifuge/BFP feed flow'])
+
+        filt_turb = self._col('filtrate_turbidity')
+        if filt_turb is not None:
+            unit = self.dp['filtrate_turbidity']['unit']
+            k['filtrate_turbidity'] = self._clarity_kpi(filt_turb.mean(), unit, ntu_target=10, mgl_target=500)
+        else:
+            k['filtrate_turbidity'] = self._insufficient(['Filtrate/centrate turbidity column - none of your columns matched this'])
+
+        filt_flow = self._col('filtrate_flow')
+        if filt_flow is not None:
+            v = filt_flow.mean()
+            k['filtrate_flow_rate'] = {'value': v, 'unit': 'gpm', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational'}
+        else:
+            k['filtrate_flow_rate'] = self._insufficient(['Filtrate/centrate flow rate (gpm) column'])
+
+        feed_solids = self._col('feed_solids')
+        if dry is not None and feed_solids is not None and feed_solids.mean() > 0:
+            recovery = min((dry.mean() / feed_solids.mean()) * 100, 100)
+            k['solids_recovery'] = {'value': recovery, 'unit': '%', 'target': '>95%', 'status': self._status_lower(recovery, 95)}
+        else:
+            k['solids_recovery'] = self._insufficient(['Influent/feed solids loading (tons or lbs DS) column - not detected in your data'])
+
+        haul_col = self.dp.get('hauling_cost', {}).get('column')
+        wet_col = self.dp.get('wet_tons', {}).get('column')
+        if haul_col and wet_col:
+            haul_series = pd.to_numeric(self.df[haul_col], errors='coerce')
+            wet_series = pd.to_numeric(self.df[wet_col], errors='coerce')
+            ratio2 = (haul_series / wet_series).replace([np.inf, -np.inf], np.nan).dropna()
+            if len(ratio2) > 0:
+                k['hauling_cost_per_wet_ton'] = {'value': ratio2.mean(), 'unit': '$/wet ton', 'target': 'Varies by hauling contract', 'status': 'ℹ️ Informational'}
+            else:
+                k['hauling_cost_per_wet_ton'] = self._insufficient(['Hauling cost ($) and wet tons columns (valid paired data)'])
+        else:
+            k['hauling_cost_per_wet_ton'] = self._insufficient(['Hauling cost ($) column'])
 
         hrs_keys = ['centrifuge_1_hours', 'centrifuge_2_hours', 'centrifuge_3_hours', 'bfp_hours', 'rotary_press_hours', 'dewatering_run_hours']
         vals = []
@@ -700,6 +777,7 @@ class KPICalculator:
         k = {}
         thick_equip = [e.lower() for e in self.plant_info.get('thickening_equipment', [])]
         is_daf = any('daf' in e or 'flotation' in e for e in thick_equip)
+        is_gbt = any('belt' in e for e in thick_equip)
 
         uf = self._col('thickener_underflow')
         gbt_uf = self._col('gbt_underflow')
@@ -713,6 +791,12 @@ class KPICalculator:
         else:
             k['thickened_solids'] = self._insufficient(['Thickener/GBT underflow solids (%) column'])
             k['underflow_lbs_gal'] = self._insufficient(['Thickener/GBT underflow solids (%) column'])
+
+        feed_solids = self._col('feed_solids')
+        if feed_solids is not None:
+            k['feed_solids_concentration'] = {'value': feed_solids.mean(), 'unit': '%', 'target': 'Track trend - context for other thickening KPIs', 'status': 'ℹ️ Informational'}
+        else:
+            k['feed_solids_concentration'] = self._insufficient(['Feed/influent solids concentration (%) column'])
 
         of = self._col('thickener_overflow')
         of_key = 'thickener_overflow'
@@ -742,6 +826,12 @@ class KPICalculator:
         k['overflow_flow_rate'] = self._insufficient(['Overflow flow rate (gpm) column - not currently tracked in your data'])
 
         area = self.plant_info.get('thickener_area')
+        if area and feed is not None:
+            hlr = feed.mean() * 1440 / area
+            k['hydraulic_loading_rate'] = {'value': hlr, 'unit': 'gpd/sq ft', 'target': '400-800 gpd/sq ft (gravity thickener typical)', 'status': self._status_range(hlr, 400, 800)}
+        else:
+            k['hydraulic_loading_rate'] = self._insufficient(['Thickener surface area (Plant Information) plus feed flow (gpm) column'])
+
         if area and feed is not None and primary_uf is not None:
             throughput = feed.mean() * 1440 * 8.34 * (primary_uf.mean() / 100)
             loading = throughput / area
@@ -749,12 +839,37 @@ class KPICalculator:
         else:
             k['solids_loading_rate'] = self._insufficient(['Thickener surface area (enter in Plant Information) plus feed flow & underflow % data'])
 
+        volume = self.plant_info.get('thickener_volume_gal')
+        if volume and not is_gbt and feed is not None and feed.mean() > 0:
+            rt_hours = volume / (feed.mean() * 60)
+            k['retention_time'] = {'value': rt_hours, 'unit': 'hours', 'target': '18-24+ hours (gravity thickener typical)', 'status': self._status_lower(rt_hours, 18)}
+        else:
+            k['retention_time'] = self._insufficient(['Thickener tank volume (gallons, enter in Plant Information) plus feed flow - only applicable to gravity thickeners, not GBT'])
+
         poly2 = self._col('gbt_polymer')
         if poly2 is not None:
             v = poly2.mean()
-            k['air_polymer_consumption'] = {'value': v, 'unit': 'lbs/ton DS', 'target': '3-8 lbs/ton DS', 'status': self._status_range(v, 3, 8)}
+            k['thickening_polymer_dose'] = {'value': v, 'unit': 'lbs/ton', 'target': '2-6 lbs active/ton DS (typical GBT/gravity)', 'status': self._status_range(v, 2, 6)}
         else:
-            k['air_polymer_consumption'] = self._insufficient(['Thickening polymer/air dose (lbs/ton) column'])
+            k['thickening_polymer_dose'] = self._insufficient(['Thickening polymer dose (lbs/ton) column'])
+
+        k['daf_air_to_solids_ratio'] = self._insufficient([
+            'DAF air-to-solids ratio requires calibrated air mass flow and solids mass flow instrumentation '
+            '(saturator pressure/flow, recycle ratio) that most operational spreadsheets don\'t log - pull this '
+            'from your DAF control panel if you need it, rather than estimating it here.'
+        ])
+
+        torque = self._col('thickener_torque')
+        if torque is not None:
+            k['rake_torque_monitor'] = {'value': torque.mean(), 'unit': 'Nm', 'target': 'Compare to manufacturer-rated torque limit', 'status': 'ℹ️ Informational — rising trend may indicate rag/solids buildup'}
+        else:
+            k['rake_torque_monitor'] = self._insufficient(['Thickener rake torque (Nm) column'])
+
+        speed = self._col('gbt_belt_speed')
+        if speed is not None:
+            k['belt_speed_monitor'] = {'value': speed.mean(), 'unit': speed_unit if (speed_unit := self.dp.get('gbt_belt_speed', {}).get('unit')) not in ('Unknown', None) else '', 'target': 'Track trend vs. underflow/overflow quality', 'status': 'ℹ️ Informational'}
+        else:
+            k['belt_speed_monitor'] = self._insufficient(['GBT belt speed column'])
 
         th_hrs = self._col('thickening_run_hours')
         if th_hrs is not None:
@@ -778,7 +893,7 @@ class PerformanceAnalyzer:
     @staticmethod
     def _estimate_savings(key, val):
         value = val['value']
-        if key == 'polymer_consumption':
+        if key == 'active_polymer_dose':
             annual_cost = value * 50 * 365
             target_cost = 12 * 50 * 365
             savings = max(annual_cost - target_cost, 0)
@@ -973,7 +1088,11 @@ else:
 
         plant_capacity = st.number_input("Plant Capacity (MGD)", value=10.0, min_value=0.1)
         thickener_area_input = st.number_input(
-            "Thickener Surface Area (sq ft) - optional, enables Solids Loading Rate KPI",
+            "Thickener Surface Area (sq ft) - optional, enables Solids Loading & Hydraulic Loading Rate KPIs",
+            value=0.0, min_value=0.0,
+        )
+        thickener_volume_input = st.number_input(
+            "Gravity Thickener Tank Volume (gallons) - optional, enables Retention Time KPI (not applicable to GBT)",
             value=0.0, min_value=0.0,
         )
 
@@ -981,6 +1100,7 @@ else:
             'name': plant_name, 'location': plant_location,
             'dewatering_equipment': dewatering_equipment, 'thickening_equipment': thickening_equipment,
             'capacity': plant_capacity, 'thickener_area': thickener_area_input if thickener_area_input > 0 else None,
+            'thickener_volume_gal': thickener_volume_input if thickener_volume_input > 0 else None,
         }
 
     # ------------------------------------------------------
@@ -1321,13 +1441,23 @@ else:
         st.write(f"**Equipment:** {', '.join(plant_info.get('dewatering_equipment', ['Not specified']))}")
 
         if detected_params.get('polymer', {}).get('column'):
-            st.subheader("Polymer Efficiency")
+            st.subheader("Active Polymer Dose")
             poly_col = detected_params['polymer']['column']
             poly_unit = detected_params['polymer']['unit']
             st.caption(f"Column used: **{poly_col}**")
-            fig = chart_renderer.render_line_with_ma(poly_col, poly_unit, "Polymer Efficiency", threshold_excellent=12, threshold_good=15)
+            fig = chart_renderer.render_line_with_ma(poly_col, poly_unit, "Active Polymer Dose", threshold_excellent=12, threshold_good=15)
             st.plotly_chart(fig, use_container_width=True, key="poly_chart")
             render_footnote('polymer', ' lbs/ton')
+
+        if detected_params.get('polymer_raw', {}).get('column'):
+            st.subheader("Raw/Neat Polymer Dose")
+            poly_raw_col = detected_params['polymer_raw']['column']
+            poly_raw_unit = detected_params['polymer_raw']['unit']
+            st.caption(f"Column used: **{poly_raw_col}**")
+            fig = chart_renderer.render_line_with_ma(poly_raw_col, poly_raw_unit, "Raw/Neat Polymer Dose")
+            st.plotly_chart(fig, use_container_width=True, key="poly_raw_chart")
+            st.caption("ℹ️ No fixed benchmark — this is product (as-delivered) basis, which varies by polymer concentration. "
+                       "Compare against the Active Polymer Dose above and your product's spec sheet.")
 
         if detected_params.get('cake_quality', {}).get('column'):
             st.subheader("Cake Quality")
@@ -1408,6 +1538,15 @@ else:
                 render_footnote('gbt_overflow', f' {gbt_of_unit}')
             else:
                 st.caption("ℹ️ Benchmark lines assume mg/L TSS — verify against your column's actual unit before comparing.")
+
+        if detected_params.get('gbt_polymer', {}).get('column'):
+            st.subheader("Thickening Polymer Dose")
+            th_poly_col = detected_params['gbt_polymer']['column']
+            th_poly_unit = detected_params['gbt_polymer']['unit']
+            st.caption(f"Column used: **{th_poly_col}**")
+            fig = chart_renderer.render_line_with_ma(th_poly_col, th_poly_unit, "Thickening Polymer Dose", threshold_excellent=2, threshold_good=6)
+            st.plotly_chart(fig, use_container_width=True, key="thick_poly_chart")
+            st.caption("📊 Typical benchmark — 🟢 2-6 lbs active/ton DS for GBT/gravity thickening. DAF systems often run higher; treat as a starting reference, not a hard limit.")
 
         if not any(detected_params.get(k, {}).get('column') for k in ['thickener_underflow', 'thickener_overflow', 'gbt_underflow', 'gbt_overflow']):
             st.info("No thickening indicators are confirmed yet. Check **Confirm Data Mapping** above — if your data "
