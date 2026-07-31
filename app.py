@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 from fuzzywuzzy import fuzz
 import warnings
+import os
 warnings.filterwarnings('ignore')
 
 try:
@@ -21,8 +22,250 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.title("🌊 AI-Powered WWTP Dewatering & Thickening Performance Analyzer")
-st.markdown("**Fuzzy Parameter Detection | Confirm-Before-You-Analyze | Period A/B Benchmark | AI Recommendations**")
+# ============================================================
+# COLOR PALETTE (Veolia brand colors, from the public 2024 graphic charter)
+# ============================================================
+VEOLIA = {
+    'red': '#FF0000',
+    'marine': '#002D62',
+    'turquoise': '#05C3DD',
+    'sky_blue': '#8DACCD',
+    'pale_blue': '#99E1EF',
+    'green': '#78BE21',
+    'forest_green': '#438D42',
+    'apricot': '#FFAC00',
+    'orange': '#FF6900',
+    'purple': '#772583',
+    'yellow': '#FFD616',
+    'pale_green': '#C1DB8A',
+    'apple_green': '#C7D64F',
+    'pale_yellow': '#FFED99',
+    'lavender': '#B092BD',
+    'white': '#FFFFFF',
+    'ink_light': '#5A6B7A',
+}
+
+# ============================================================
+# GLOBAL CSS THEME
+# ============================================================
+st.markdown(f"""
+<style>
+    .stApp {{
+        background-color: #F6F9FA;
+    }}
+    h1, h2, h3 {{
+        color: {VEOLIA['marine']} !important;
+        font-weight: 700 !important;
+    }}
+    h3 {{
+        border-bottom: 2px solid {VEOLIA['pale_blue']};
+        padding-bottom: 6px;
+    }}
+    p, div, span, label {{
+        color: {VEOLIA['marine']};
+    }}
+
+    /* --- Header banner --- */
+    .hub-header {{
+        background: linear-gradient(90deg, {VEOLIA['marine']} 0%, #003D7A 100%);
+        border-radius: 10px;
+        padding: 22px 28px;
+        margin-bottom: 22px;
+        display: flex;
+        align-items: center;
+        gap: 22px;
+        box-shadow: 0 2px 10px rgba(0,45,98,0.25);
+    }}
+    .hub-wordmark {{
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding-right: 22px;
+        border-right: 1px solid rgba(255,255,255,0.25);
+    }}
+    .hub-wordmark-dot {{
+        width: 14px; height: 14px; border-radius: 50%;
+        background: {VEOLIA['turquoise']};
+        box-shadow: 0 0 0 4px rgba(5,195,221,0.25);
+    }}
+    .hub-wordmark-text {{
+        font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
+        font-size: 22px;
+        font-weight: 800;
+        letter-spacing: 2px;
+        color: {VEOLIA['white']};
+    }}
+    .hub-title-block h1 {{
+        color: {VEOLIA['white']} !important;
+        font-size: 26px !important;
+        margin: 0 0 4px 0 !important;
+        font-weight: 700 !important;
+    }}
+    .hub-title-block p {{
+        color: {VEOLIA['pale_blue']} !important;
+        margin: 0 !important;
+        font-size: 14px !important;
+    }}
+
+    /* --- Metrics (KPI cards) --- */
+    [data-testid="stMetric"] {{
+        background: {VEOLIA['white']};
+        border: 1px solid #E1E9EE;
+        border-left: 4px solid {VEOLIA['turquoise']};
+        border-radius: 8px;
+        padding: 12px 14px 10px 14px;
+        box-shadow: 0 1px 3px rgba(0,45,98,0.06);
+    }}
+    [data-testid="stMetricLabel"] {{
+        color: {VEOLIA['ink_light']} !important;
+        font-size: 12.5px !important;
+        font-weight: 600 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+    }}
+    [data-testid="stMetricValue"] {{
+        color: {VEOLIA['marine']} !important;
+        font-weight: 700 !important;
+    }}
+
+    /* --- Tabs --- */
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 4px;
+        border-bottom: 2px solid #E1E9EE;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        color: {VEOLIA['ink_light']};
+        font-weight: 600;
+        padding: 8px 16px;
+    }}
+    .stTabs [aria-selected="true"] {{
+        color: {VEOLIA['marine']} !important;
+        border-bottom: 3px solid {VEOLIA['turquoise']} !important;
+    }}
+
+    /* --- Buttons --- */
+    .stButton>button, .stDownloadButton>button {{
+        background-color: {VEOLIA['marine']};
+        color: {VEOLIA['white']};
+        border: none;
+        border-radius: 6px;
+        font-weight: 600;
+    }}
+    .stButton>button:hover, .stDownloadButton>button:hover {{
+        background-color: {VEOLIA['turquoise']};
+        color: {VEOLIA['marine']};
+    }}
+
+    /* --- Expanders --- */
+    [data-testid="stExpander"] {{
+        border: 1px solid #E1E9EE !important;
+        border-radius: 8px !important;
+        background: {VEOLIA['white']};
+    }}
+
+    /* --- Sidebar --- */
+    section[data-testid="stSidebar"] {{
+        background-color: {VEOLIA['marine']};
+    }}
+    section[data-testid="stSidebar"] * {{
+        color: {VEOLIA['white']} !important;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stExpander"] {{
+        background: rgba(255,255,255,0.06);
+        border-color: rgba(255,255,255,0.15) !important;
+    }}
+    section[data-testid="stSidebar"] input, section[data-testid="stSidebar"] textarea {{
+        color: {VEOLIA['marine']} !important;
+    }}
+
+    /* --- Dataframes --- */
+    [data-testid="stDataFrame"] {{
+        border: 1px solid #E1E9EE;
+        border-radius: 6px;
+    }}
+
+    /* --- Dividers --- */
+    hr {{
+        border-top: 1px solid #E1E9EE !important;
+    }}
+
+    /* --- Status chips --- */
+    .status-chip {{
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 12px;
+        font-size: 12.5px;
+        font-weight: 700;
+    }}
+</style>
+""", unsafe_allow_html=True)
+
+# ============================================================
+# HEADER BANNER (Hubgrade wordmark + app title)
+# ============================================================
+_logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hubgrade_logo.png") if '__file__' in dir() else "hubgrade_logo.png"
+
+with st.container():
+    if os.path.exists(_logo_path):
+        hcol1, hcol2 = st.columns([1, 5])
+        with hcol1:
+            st.image(_logo_path, width=140)
+        with hcol2:
+            st.markdown(f"""
+            <div style="padding-top:8px;">
+                <h1 style="color:{VEOLIA['marine']} !important; margin:0 0 4px 0;">🌊 AI-Powered WWTP Dewatering & Thickening Performance Analyzer</h1>
+                <p style="color:{VEOLIA['ink_light']}; margin:0;">Fuzzy Parameter Detection | Confirm-Before-You-Analyze | Period A/B Benchmark | AI Recommendations</p>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div class="hub-header">
+            <div class="hub-wordmark">
+                <div class="hub-wordmark-dot"></div>
+                <div class="hub-wordmark-text">HUBGRADE</div>
+            </div>
+            <div class="hub-title-block">
+                <h1>🌊 AI-Powered WWTP Dewatering &amp; Thickening Performance Analyzer</h1>
+                <p>Fuzzy Parameter Detection · Confirm-Before-You-Analyze · Period A/B Benchmark · AI Recommendations</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+def status_chip(status_text):
+    """Render a KPI/recommendation status string as a colored chip matching the Veolia palette,
+    without changing the underlying text the rest of the app string-matches on."""
+    if not status_text:
+        return ""
+    if 'On Target' in status_text or '✅' in status_text:
+        bg, fg = '#EAF4DD', VEOLIA['forest_green']
+    elif 'Below Target' in status_text or '🔴' in status_text:
+        bg, fg = '#FFE3E3', VEOLIA['red']
+    elif 'Above Target' in status_text or '🟠' in status_text:
+        bg, fg = '#FFEFD9', VEOLIA['orange']
+    elif 'Informational' in status_text or 'ℹ️' in status_text:
+        bg, fg = '#E7F2F8', VEOLIA['marine']
+    else:
+        bg, fg = '#EEF3F6', VEOLIA['ink_light']
+    label = status_text.replace('✅', '').replace('🔴', '').replace('🟠', '').replace('ℹ️', '').strip()
+    return f'<span class="status-chip" style="background:{bg}; color:{fg};">{label}</span>'
+
+
+def priority_chip(priority_text):
+    """Render a recommendation priority (CRITICAL/HIGH/MEDIUM/OPTIMAL) as a colored chip."""
+    if 'CRITICAL' in priority_text:
+        bg, fg = '#FFE3E3', VEOLIA['red']
+    elif 'HIGH' in priority_text:
+        bg, fg = '#FFEFD9', VEOLIA['orange']
+    elif 'MEDIUM' in priority_text:
+        bg, fg = '#FFF7DB', '#9A7B00'
+    elif 'OPTIMAL' in priority_text:
+        bg, fg = '#EAF4DD', VEOLIA['forest_green']
+    else:
+        bg, fg = '#EEF3F6', VEOLIA['ink_light']
+    label = priority_text.replace('🔴', '').replace('🟠', '').replace('🟡', '').replace('✅', '').strip()
+    return f'<span class="status-chip" style="background:{bg}; color:{fg};">{label}</span>'
+
 
 # ============================================================
 # PERFORMANCE THRESHOLDS (used for chart footnotes + ratings)
@@ -756,12 +999,20 @@ class CorrelationAnalyzer:
         corr_matrix = self.calculate_correlations()
         if corr_matrix is None:
             return None
+        veolia_diverging = [
+            [0.0, VEOLIA['red']], [0.25, '#FFB3B3'], [0.5, '#FFFFFF'],
+            [0.75, VEOLIA['sky_blue']], [1.0, VEOLIA['marine']],
+        ]
         fig = go.Figure(data=go.Heatmap(
             z=corr_matrix.values, x=corr_matrix.columns, y=corr_matrix.columns,
-            colorscale='RdBu', zmid=0, text=np.round(corr_matrix.values, 2),
-            texttemplate='%{text:.2f}', textfont={"size": 10}, colorbar=dict(title="Correlation"),
+            colorscale=veolia_diverging, zmid=0, zmin=-1, zmax=1, text=np.round(corr_matrix.values, 2),
+            texttemplate='%{text:.2f}', textfont={"size": 10, "color": VEOLIA['marine']}, colorbar=dict(title="Correlation"),
         ))
-        fig.update_layout(title="Correlation Matrix - Confirmed Parameters", height=600, xaxis_title="Parameters", yaxis_title="Parameters")
+        fig.update_layout(
+            title=dict(text="Correlation Matrix - Confirmed Parameters", font=dict(color=VEOLIA['marine'])),
+            height=600, xaxis_title="Parameters", yaxis_title="Parameters",
+            plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', font=dict(color=VEOLIA['marine']),
+        )
         return fig
 
     def create_scatter_plot(self, var1_col, var2_col):
@@ -770,13 +1021,18 @@ class CorrelationAnalyzer:
         var2_data = var2_data[var1_data.index]
         corr = var1_data.corr(var2_data)
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=var1_data, y=var2_data, mode='markers', marker=dict(size=8, color='blue', opacity=0.6), name='Data Points'))
+        fig.add_trace(go.Scatter(x=var1_data, y=var2_data, mode='markers', marker=dict(size=8, color=VEOLIA['turquoise'], opacity=0.7), name='Data Points'))
         if len(var1_data) > 1:
             z = np.polyfit(var1_data, var2_data, 1)
             p = np.poly1d(z)
             x_trend = np.linspace(var1_data.min(), var1_data.max(), 100)
-            fig.add_trace(go.Scatter(x=x_trend, y=p(x_trend), mode='lines', name='Trend Line', line=dict(color='red', width=2)))
-        fig.update_layout(title=f"{var1_col} vs {var2_col}<br>Correlation: {corr:.3f}", xaxis_title=var1_col, yaxis_title=var2_col, height=500, hovermode='closest')
+            fig.add_trace(go.Scatter(x=x_trend, y=p(x_trend), mode='lines', name='Trend Line', line=dict(color=VEOLIA['apricot'], width=2)))
+        fig.update_layout(
+            title=dict(text=f"{var1_col} vs {var2_col}<br>Correlation: {corr:.3f}", font=dict(color=VEOLIA['marine'])),
+            xaxis_title=var1_col, yaxis_title=var2_col, height=500, hovermode='closest',
+            plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', font=dict(color=VEOLIA['marine']),
+            xaxis=dict(gridcolor='#E9EEF1'), yaxis=dict(gridcolor='#E9EEF1'),
+        )
         return fig
 
 
@@ -1283,27 +1539,37 @@ class ChartRenderer:
     def __init__(self, df):
         self.df = df
 
+    @staticmethod
+    def _base_layout(fig, title, unit):
+        fig.update_layout(
+            title=dict(text=title, font=dict(color=VEOLIA['marine'], size=16)),
+            height=400, hovermode='x unified', xaxis_title="Days", yaxis_title=unit,
+            plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF',
+            font=dict(color=VEOLIA['marine']),
+            legend=dict(bgcolor='rgba(255,255,255,0.8)'),
+            xaxis=dict(gridcolor='#E9EEF1'), yaxis=dict(gridcolor='#E9EEF1'),
+        )
+        return fig
+
     def render_line_with_ma(self, column, unit, title, threshold_excellent=None, threshold_good=None):
         col_data = pd.to_numeric(self.df[column], errors='coerce')
         col_ma = col_data.rolling(window=7).mean()
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=self.df.index, y=col_data, mode='markers', name='Daily', marker=dict(size=4, color='lightblue', opacity=0.6)))
-        fig.add_trace(go.Scatter(x=self.df.index, y=col_ma, mode='lines', name='7-day MA', line=dict(color='darkblue', width=2)))
+        fig.add_trace(go.Scatter(x=self.df.index, y=col_data, mode='markers', name='Daily', marker=dict(size=4, color=VEOLIA['sky_blue'], opacity=0.7)))
+        fig.add_trace(go.Scatter(x=self.df.index, y=col_ma, mode='lines', name='7-day MA', line=dict(color=VEOLIA['marine'], width=2)))
         if threshold_excellent is not None:
-            fig.add_hline(y=threshold_excellent, line_dash="dash", line_color="green", annotation_text="Excellent")
+            fig.add_hline(y=threshold_excellent, line_dash="dash", line_color=VEOLIA['forest_green'], annotation_text="Excellent", annotation_font_color=VEOLIA['forest_green'])
         if threshold_good is not None:
-            fig.add_hline(y=threshold_good, line_dash="dash", line_color="orange", annotation_text="Good")
-        fig.update_layout(title=f"{title} ({unit})", height=400, hovermode='x unified', xaxis_title="Days", yaxis_title=unit)
-        return fig
+            fig.add_hline(y=threshold_good, line_dash="dash", line_color=VEOLIA['apricot'], annotation_text="Good", annotation_font_color=VEOLIA['apricot'])
+        return self._base_layout(fig, f"{title} ({unit})", unit)
 
     def render_bar_with_ma(self, column, unit, title):
         col_data = pd.to_numeric(self.df[column], errors='coerce')
         col_ma = col_data.rolling(window=7).mean()
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=self.df.index, y=col_data, name='Daily', marker=dict(color='#4169E1', opacity=0.7)))
-        fig.add_trace(go.Scatter(x=self.df.index, y=col_ma, mode='lines', name='7-day MA', line=dict(color='darkblue', width=2)))
-        fig.update_layout(title=f"{title} ({unit})", height=400, hovermode='x unified', xaxis_title="Days", yaxis_title=unit)
-        return fig
+        fig.add_trace(go.Bar(x=self.df.index, y=col_data, name='Daily', marker=dict(color=VEOLIA['turquoise'], opacity=0.75)))
+        fig.add_trace(go.Scatter(x=self.df.index, y=col_ma, mode='lines', name='7-day MA', line=dict(color=VEOLIA['marine'], width=2)))
+        return self._base_layout(fig, f"{title} ({unit})", unit)
 
     def render_ratio(self, column1, column2, unit, title, threshold_excellent=None, threshold_good=None):
         col1_data = pd.to_numeric(self.df[column1], errors='coerce')
@@ -1311,14 +1577,13 @@ class ChartRenderer:
         ratio_data = (col1_data / col2_data).replace([np.inf, -np.inf], np.nan)
         ratio_ma = ratio_data.rolling(window=7).mean()
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=self.df.index, y=ratio_data, mode='markers', name='Daily', marker=dict(size=4, color='teal', opacity=0.6)))
-        fig.add_trace(go.Scatter(x=self.df.index, y=ratio_ma, mode='lines', name='7-day MA', line=dict(color='darkslategray', width=2)))
+        fig.add_trace(go.Scatter(x=self.df.index, y=ratio_data, mode='markers', name='Daily', marker=dict(size=4, color=VEOLIA['sky_blue'], opacity=0.7)))
+        fig.add_trace(go.Scatter(x=self.df.index, y=ratio_ma, mode='lines', name='7-day MA', line=dict(color=VEOLIA['marine'], width=2)))
         if threshold_excellent is not None:
-            fig.add_hline(y=threshold_excellent, line_dash="dash", line_color="green", annotation_text="Excellent")
+            fig.add_hline(y=threshold_excellent, line_dash="dash", line_color=VEOLIA['forest_green'], annotation_text="Excellent", annotation_font_color=VEOLIA['forest_green'])
         if threshold_good is not None:
-            fig.add_hline(y=threshold_good, line_dash="dash", line_color="orange", annotation_text="Good")
-        fig.update_layout(title=f"{title} ({unit})", height=400, hovermode='x unified', xaxis_title="Days", yaxis_title=unit)
-        return fig
+            fig.add_hline(y=threshold_good, line_dash="dash", line_color=VEOLIA['apricot'], annotation_text="Good", annotation_font_color=VEOLIA['apricot'])
+        return self._base_layout(fig, f"{title} ({unit})", unit)
 
 
 def render_kpi_grid(kpis, definitions, per_row=5):
@@ -1337,7 +1602,7 @@ def render_kpi_grid(kpis, definitions, per_row=5):
                 else:
                     st.metric(defn['name'], f"{val['value']:.2f} {val['unit']}", help=defn['description'])
                     st.caption(f"Target: {val.get('target', 'N/A')}")
-                    st.write(val.get('status', ''))
+                    st.markdown(status_chip(val.get('status', '')), unsafe_allow_html=True)
 
 
 # ============================================================
@@ -1520,7 +1785,8 @@ else:
             with st.container():
                 col_h1, col_h2 = st.columns([3, 1])
                 with col_h1:
-                    st.markdown(f"### {rec['priority']} {rec['category']}")
+                    st.markdown(priority_chip(rec['priority']), unsafe_allow_html=True)
+                    st.markdown(f"### {rec['category']}")
                 with col_h2:
                     st.write(f"**Risk:** {rec['risk']}")
 
@@ -1560,7 +1826,7 @@ else:
         if good_items:
             with st.expander(f"✅ Performing Well ({len(good_items)} metric(s) at or near target)"):
                 for key, name, val in good_items:
-                    st.write(f"**{name}:** {val['value']:.2f} {val['unit']} — {val.get('status', '')}")
+                    st.markdown(f"**{name}:** {val['value']:.2f} {val['unit']} &nbsp; {status_chip(val.get('status', ''))}", unsafe_allow_html=True)
                     if val.get('basis'):
                         st.caption(val['basis'])
 
@@ -1629,14 +1895,19 @@ else:
 
                 def plot_series(df_agg, title):
                     fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=df_agg.index, y=df_agg.values, mode='lines+markers', name=working_label, line=dict(color='#1f77b4', width=2), marker=dict(size=6)))
+                    fig.add_trace(go.Scatter(x=df_agg.index, y=df_agg.values, mode='lines+markers', name=working_label, line=dict(color=VEOLIA['turquoise'], width=2), marker=dict(size=6, color=VEOLIA['marine'])))
                     x_numeric = np.arange(len(df_agg))
                     z = None
                     if len(x_numeric) > 1:
                         z = np.polyfit(x_numeric, df_agg.values, 1)
                         p = np.poly1d(z)
-                        fig.add_trace(go.Scatter(x=df_agg.index, y=p(x_numeric), mode='lines', name='Trend', line=dict(color='red', width=2, dash='dash')))
-                    fig.update_layout(title=title, xaxis_title="Date", yaxis_title=working_unit, height=500, hovermode='x unified')
+                        fig.add_trace(go.Scatter(x=df_agg.index, y=p(x_numeric), mode='lines', name='Trend', line=dict(color=VEOLIA['apricot'], width=2, dash='dash')))
+                    fig.update_layout(
+                        title=dict(text=title, font=dict(color=VEOLIA['marine'])),
+                        xaxis_title="Date", yaxis_title=working_unit, height=500, hovermode='x unified',
+                        plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', font=dict(color=VEOLIA['marine']),
+                        xaxis=dict(gridcolor='#E9EEF1'), yaxis=dict(gridcolor='#E9EEF1'),
+                    )
                     st.plotly_chart(fig, use_container_width=True)
 
                     stat_c1, stat_c2, stat_c3, stat_c4 = st.columns(4)
@@ -1731,22 +2002,23 @@ else:
                                 fig = go.Figure()
                                 fig.add_trace(go.Scatter(
                                     x=offset_a, y=agg_a.values, mode='lines+markers', name=label_a,
-                                    line=dict(color='#1f77b4', width=3), customdata=dates_a_text,
+                                    line=dict(color=VEOLIA['turquoise'], width=3), customdata=dates_a_text,
                                     hovertemplate=f"{label_a}<br>%{{customdata}}: %{{y:.3f}}<extra></extra>",
                                 ))
                                 fig.add_trace(go.Scatter(
                                     x=offset_b, y=agg_b.values, mode='lines+markers', name=label_b,
-                                    line=dict(color='#ff7f0e', width=3), customdata=dates_b_text,
+                                    line=dict(color=VEOLIA['apricot'], width=3), customdata=dates_b_text,
                                     hovertemplate=f"{label_b}<br>%{{customdata}}: %{{y:.3f}}<extra></extra>",
                                 ))
                                 fig.update_layout(
-                                    title=f"Benchmark Comparison: {working_label} ({aggregation}, {agg_method})",
+                                    title=dict(text=f"Benchmark Comparison: {working_label} ({aggregation}, {agg_method})", font=dict(color=VEOLIA['marine'])),
                                     xaxis=dict(
                                         title="Date (Period A dates shown; Period B is aligned to the same relative position - hover for its actual date)",
-                                        tickmode='array', tickvals=tickvals, ticktext=ticktext, tickangle=-30,
+                                        tickmode='array', tickvals=tickvals, ticktext=ticktext, tickangle=-30, gridcolor='#E9EEF1',
                                     ),
-                                    yaxis_title=working_unit, height=520, hovermode='closest',
-                                    margin=dict(b=110),
+                                    yaxis=dict(title=working_unit, gridcolor='#E9EEF1'),
+                                    height=520, hovermode='closest', margin=dict(b=110),
+                                    plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', font=dict(color=VEOLIA['marine']),
                                 )
                                 st.plotly_chart(fig, use_container_width=True)
 
