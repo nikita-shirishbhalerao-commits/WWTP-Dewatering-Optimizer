@@ -1234,42 +1234,15 @@ else:
                                 label_a = f"Period A: {a_start.strftime('%b %d, %Y')} - {a_end.strftime('%b %d, %Y')}"
                                 label_b = f"Period B: {b_start.strftime('%b %d, %Y')} - {b_end.strftime('%b %d, %Y')}"
 
-                                offset_a = list(range(len(agg_a)))
-                                offset_b = list(range(len(agg_b)))
-                                date_fmt = '%b %d, %Y' if aggregation in ('Daily', 'Weekly') else '%b %Y'
-                                max_len = max(len(offset_a), len(offset_b), 1)
-
                                 fig = go.Figure()
-                                fig.add_trace(go.Scatter(
-                                    x=offset_a, y=agg_a.values, mode='lines+markers', name=label_a,
-                                    line=dict(color='#1f77b4', width=3), xaxis='x',
-                                ))
-                                fig.add_trace(go.Scatter(
-                                    x=offset_b, y=agg_b.values, mode='lines+markers', name=label_b,
-                                    line=dict(color='#ff7f0e', width=3), xaxis='x2',
-                                ))
+                                fig.add_trace(go.Scatter(x=list(range(len(agg_a))), y=agg_a.values, mode='lines+markers', name=label_a, line=dict(color='#1f77b4', width=3)))
+                                fig.add_trace(go.Scatter(x=list(range(len(agg_b))), y=agg_b.values, mode='lines+markers', name=label_b, line=dict(color='#ff7f0e', width=3)))
                                 fig.update_layout(
                                     title=f"Benchmark Comparison: {selected_column} ({aggregation}, {agg_method})",
-                                    yaxis_title=numeric_cols[selected_column],
-                                    height=550,
-                                    hovermode='closest',
-                                    xaxis=dict(
-                                        title="Period A dates", side='bottom', tickmode='array',
-                                        tickvals=offset_a, ticktext=[d.strftime(date_fmt) for d in agg_a.index],
-                                        range=[-0.5, max_len - 0.5],
-                                    ),
-                                    xaxis2=dict(
-                                        title="Period B dates", side='top', overlaying='x', tickmode='array',
-                                        tickvals=offset_b, ticktext=[d.strftime(date_fmt) for d in agg_b.index],
-                                        range=[-0.5, max_len - 0.5],
-                                    ),
-                                    legend=dict(orientation='h', yanchor='bottom', y=1.12, xanchor='left', x=0),
-                                    margin=dict(t=100),
+                                    xaxis_title=f"{aggregation} Period Offset (0 = start of each period)",
+                                    yaxis_title=numeric_cols[selected_column], height=500, hovermode='x unified',
                                 )
                                 st.plotly_chart(fig, use_container_width=True)
-                                st.caption("Points are aligned by relative position within each period (1st day vs 1st day, "
-                                           "2nd vs 2nd, etc.) so you can compare trend shape. The bottom axis shows Period "
-                                           "A's actual dates; the top axis shows Period B's actual dates.")
 
                                 st.subheader("📊 Comparison Statistics")
                                 stat_df = pd.DataFrame({
