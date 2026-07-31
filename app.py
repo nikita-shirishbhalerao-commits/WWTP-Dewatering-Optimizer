@@ -243,6 +243,36 @@ PARAMETER_KEYWORDS = {
 }
 
 
+EXPECTED_UNIT_FAMILIES = {
+    'polymer': {'lbs/ton'},
+    'cake_quality': {'%'},
+    'dry_tons': {'Dry Tons', 'Tons'},
+    'wet_tons': {'Wet Tons', 'Tons'},
+    'trucks': {'Count'},
+    'influent_flow': {'MGD', 'GPM', 'GPD'},
+    'effluent_flow': {'MGD', 'GPM', 'GPD'},
+    'filtrate_turbidity': {'NTU', 'mg/L'},
+    'filtrate_flow': {'GPM', 'MGD', 'GPD'},
+    'feed_solids': {'%'},
+    'thickener_feed': {'GPM', 'MGD', 'GPD'},
+    'thickener_underflow': {'%'},
+    'thickener_overflow': {'NTU', 'mg/L'},
+    'thickener_torque': {'Nm'},
+    'gbt_feed': {'GPM', 'MGD', 'GPD'},
+    'gbt_underflow': {'%'},
+    'gbt_overflow': {'NTU', 'mg/L'},
+    'gbt_belt_speed': {'RPM'},
+    'gbt_polymer': {'lbs/ton'},
+    'bowl_speed': {'RPM'},
+    'polymer_cost': {'$'},
+    'hauling_cost': {'$'},
+    'centrifuge_1_hours': {'Hours'}, 'centrifuge_2_hours': {'Hours'}, 'centrifuge_3_hours': {'Hours'},
+    'bfp_hours': {'Hours'}, 'rotary_press_hours': {'Hours'},
+    'dewatering_run_hours': {'Hours'},
+    'thickening_run_hours': {'Hours'},
+}
+
+
 def categorize_param(key):
     if key.startswith('gbt') or key.startswith('thickener') or key == 'thickening_run_hours':
         return 'Thickening'
@@ -271,9 +301,11 @@ class FuzzyParameterDetector:
             s = s.replace(ch, ' ')
         return ' '.join(s.split())
 
-    def find_parameters(self, keyword_groups, threshold=55):
+    def find_parameters(self, keyword_groups, threshold=55, expected_units=None):
+        expected_units = expected_units or {}
         results = {}
         for param_name, keywords in keyword_groups.items():
+            allowed_units = expected_units.get(param_name)
             best_col, best_score = None, 0
             for col, col_clean in zip(self.columns, self.clean_columns):
                 col_best = 0
@@ -285,13 +317,20 @@ class FuzzyParameterDetector:
                     )
                     if score > col_best:
                         col_best = score
-                if col_best > best_score:
-                    best_score = col_best
+                # Penalize columns whose detected unit doesn't match what this parameter expects.
+                # This is what stops e.g. a raw GPD polymer feed-rate column from beating a real
+                # lbs/ton dose column just because both contain the word "polymer".
+                adjusted = col_best
+                if allowed_units:
+                    if self._detect_unit(col) not in allowed_units:
+                        adjusted = col_best * 0.55
+                if adjusted > best_score:
+                    best_score = adjusted
                     best_col = col
             if best_col and best_score >= threshold:
-                results[param_name] = {'column': best_col, 'score': best_score, 'unit': self._detect_unit(best_col)}
+                results[param_name] = {'column': best_col, 'score': round(best_score), 'unit': self._detect_unit(best_col)}
             else:
-                results[param_name] = {'column': None, 'score': best_score, 'unit': 'Unknown'}
+                results[param_name] = {'column': None, 'score': round(best_score), 'unit': 'Unknown'}
         self.detected_params = results
         return results
 
@@ -364,7 +403,7 @@ def load_wwtp_csv(uploaded_file):
 
 def detect_parameters(df, threshold=55):
     detector = FuzzyParameterDetector(df.columns)
-    return detector.find_parameters(PARAMETER_KEYWORDS, threshold=threshold)
+    return detector.find_parameters(PARAMETER_KEYWORDS, threshold=threshold, expected_units=EXPECTED_UNIT_FAMILIES)
 
 
 def render_mapping_editor(detected_params, df_columns, key_prefix):
@@ -389,7 +428,7 @@ def render_mapping_editor(detected_params, df_columns, key_prefix):
             'Parameter': st.column_config.TextColumn(disabled=True),
             'Column Used': st.column_config.SelectboxColumn(options=all_columns, required=True, width="large"),
             'Match %': st.column_config.NumberColumn(disabled=True, format="%d%%"),
-            'Unit': st.column_config.TextColumn(disabled=True),
+            'Unit': st.column_config.TextColumn(disabled=False, help="Edit this if the auto-detected unit is wrong (e.g. it should say NTU, mg/L, %, lbs/ton, etc.)"),
         },
         hide_index=True,
         use_container_width=True,
@@ -400,10 +439,11 @@ def render_mapping_editor(detected_params, df_columns, key_prefix):
     for _, row in edited.iterrows():
         key = row['Parameter']
         col = row['Column Used']
+        unit_override = str(row['Unit']).strip() if pd.notna(row['Unit']) and str(row['Unit']).strip() else None
         if col == "— None detected —" or pd.isna(col):
             updated[key] = {'column': None, 'score': 0, 'unit': 'Unknown'}
         else:
-            updated[key] = {'column': col, 'score': row['Match %'], 'unit': FuzzyParameterDetector._detect_unit(col)}
+            updated[key] = {'column': col, 'score': row['Match %'], 'unit': unit_override or FuzzyParameterDetector._detect_unit(col)}
     return updated
 
 
@@ -897,7 +937,7 @@ if uploaded_file is None:
     - 🔍 Fuzzy Logic auto-detects your columns — **and you confirm/correct the mapping before anything is calculated**
     - 📊 AI-derived KPI dashboard (only shows what can be computed from your data, no assumed units)
     - 💡 AI recommendations with root causes, actions, and savings estimates
-    - 📈 Trend, custom-period, and true **Period A vs Period B** (two-file) benchmark comparison
+    - 📈 Trend, custom-period, and **Period A vs Period B** benchmark comparison (just pick two date ranges)
     - 🔗 Correlation analysis between parameters
     - 🔎 Data quality / outlier detection
 
@@ -1075,7 +1115,7 @@ else:
     # ============================================================
     with tab3:
         st.header("📈 Trend & Benchmark Analysis")
-        st.write("Analyze a single indicator over time, over a custom date range, or benchmark two periods.")
+        st.write("Analyze a single indicator over time, over a custom date range, or benchmark two date ranges side-by-side — all from your one uploaded file.")
 
         numeric_cols = {}
         for param_info in detected_params.values():
@@ -1086,185 +1126,137 @@ else:
             st.warning("No confirmed numeric columns available. Go back to **Confirm Data Mapping** above.")
         else:
             mode = st.radio("Analysis Mode", ["Full Timeline", "Custom Period", "Period A vs Period B (Benchmark)"], horizontal=True)
+
+            col_s1, col_s2 = st.columns(2)
+            with col_s1:
+                selected_column = st.selectbox("Select Indicator", list(numeric_cols.keys()), format_func=lambda x: f"{x} ({numeric_cols[x]})")
+            with col_s2:
+                aggregation = st.selectbox("Aggregation Period", ["Daily", "Weekly", "Monthly", "Quarterly"])
+
             freq_map = {"Daily": 'D', "Weekly": 'W', "Monthly": 'MS', "Quarterly": 'QS'}
 
-            # --------------------------------------------------
-            # FULL TIMELINE / CUSTOM PERIOD (single file)
-            # --------------------------------------------------
-            if mode in ("Full Timeline", "Custom Period"):
-                col_s1, col_s2 = st.columns(2)
-                with col_s1:
-                    selected_column = st.selectbox("Select Indicator", list(numeric_cols.keys()), format_func=lambda x: f"{x} ({numeric_cols[x]})")
-                with col_s2:
-                    aggregation = st.selectbox("Aggregation Period", ["Daily", "Weekly", "Monthly", "Quarterly"])
+            df_yoy = df[[date_col, selected_column]].copy()
+            df_yoy[date_col] = pd.to_datetime(df_yoy[date_col])
+            df_yoy[selected_column] = pd.to_numeric(df_yoy[selected_column], errors='coerce')
+            df_yoy = df_yoy.dropna()
 
-                df_yoy = df[[date_col, selected_column]].copy()
-                df_yoy[date_col] = pd.to_datetime(df_yoy[date_col])
-                df_yoy[selected_column] = pd.to_numeric(df_yoy[selected_column], errors='coerce')
-                df_yoy = df_yoy.dropna()
-
-                if len(df_yoy) == 0:
-                    st.warning("No valid numeric data for the selected indicator")
-                else:
-                    data_min = df_yoy[date_col].min().date()
-                    data_max = df_yoy[date_col].max().date()
-
-                    def plot_series(df_agg, title):
-                        fig = go.Figure()
-                        fig.add_trace(go.Scatter(x=df_agg.index, y=df_agg.values, mode='lines+markers', name=selected_column, line=dict(color='#1f77b4', width=2), marker=dict(size=6)))
-                        x_numeric = np.arange(len(df_agg))
-                        z = None
-                        if len(x_numeric) > 1:
-                            z = np.polyfit(x_numeric, df_agg.values, 1)
-                            p = np.poly1d(z)
-                            fig.add_trace(go.Scatter(x=df_agg.index, y=p(x_numeric), mode='lines', name='Trend', line=dict(color='red', width=2, dash='dash')))
-                        fig.update_layout(title=title, xaxis_title="Date", yaxis_title=numeric_cols[selected_column], height=500, hovermode='x unified')
-                        st.plotly_chart(fig, use_container_width=True)
-
-                        stat_c1, stat_c2, stat_c3, stat_c4 = st.columns(4)
-                        with stat_c1:
-                            st.metric("Mean", f"{df_agg.mean():.2f}")
-                        with stat_c2:
-                            st.metric("Median", f"{df_agg.median():.2f}")
-                        with stat_c3:
-                            st.metric("Min", f"{df_agg.min():.2f}")
-                        with stat_c4:
-                            st.metric("Max", f"{df_agg.max():.2f}")
-
-                        if z is not None:
-                            direction = "📈 Increasing" if z[0] > 0 else "📉 Decreasing"
-                            st.write(f"**Trend:** {direction} (slope: {z[0]:.4f} per {aggregation.lower()[:-2] if aggregation != 'Daily' else 'day'})")
-
-                    if mode == "Full Timeline":
-                        try:
-                            df_agg = df_yoy.set_index(date_col)[selected_column].resample(freq_map[aggregation]).mean().dropna()
-                            if len(df_agg) > 0:
-                                plot_series(df_agg, f"{selected_column} - {aggregation} Aggregation (Full Timeline)")
-                            else:
-                                st.warning("No data available after aggregation")
-                        except Exception as e:
-                            st.error(f"Error processing data: {e}")
-
-                    else:  # Custom Period
-                        date_range = st.date_input("Select Date Range", value=(data_min, data_max), min_value=data_min, max_value=data_max)
-                        if isinstance(date_range, tuple) and len(date_range) == 2:
-                            start_d, end_d = date_range
-                            mask = (df_yoy[date_col].dt.date >= start_d) & (df_yoy[date_col].dt.date <= end_d)
-                            df_period = df_yoy[mask]
-                            if len(df_period) == 0:
-                                st.warning("No data in the selected range")
-                            else:
-                                try:
-                                    df_agg = df_period.set_index(date_col)[selected_column].resample(freq_map[aggregation]).mean().dropna()
-                                    if len(df_agg) > 0:
-                                        plot_series(df_agg, f"{selected_column} - {start_d.strftime('%b %d, %Y')} to {end_d.strftime('%b %d, %Y')}")
-                                    else:
-                                        st.warning("No data available after aggregation for this range")
-                                except Exception as e:
-                                    st.error(f"Error processing data: {e}")
-                        else:
-                            st.info("👆 Select both a start and end date to continue")
-
-            # --------------------------------------------------
-            # PERIOD A vs PERIOD B (two separate files)
-            # --------------------------------------------------
+            if len(df_yoy) == 0:
+                st.warning("No valid numeric data for the selected indicator")
             else:
-                st.write(
-                    "Upload a **separate CSV for each period** (e.g. an export covering Jan–Jun 2025, and another "
-                    "covering Jan–Jun 2026), confirm each file's column mapping, then compare an indicator across both."
-                )
+                data_min = df_yoy[date_col].min().date()
+                data_max = df_yoy[date_col].max().date()
 
-                colA, colB = st.columns(2)
-                with colA:
-                    st.markdown("#### 📁 Period A File")
-                    file_a = st.file_uploader("Upload Period A CSV", type=['csv'], key="period_a_file")
-                with colB:
-                    st.markdown("#### 📁 Period B File")
-                    file_b = st.file_uploader("Upload Period B CSV", type=['csv'], key="period_b_file")
+                def plot_series(df_agg, title):
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=df_agg.index, y=df_agg.values, mode='lines+markers', name=selected_column, line=dict(color='#1f77b4', width=2), marker=dict(size=6)))
+                    x_numeric = np.arange(len(df_agg))
+                    z = None
+                    if len(x_numeric) > 1:
+                        z = np.polyfit(x_numeric, df_agg.values, 1)
+                        p = np.poly1d(z)
+                        fig.add_trace(go.Scatter(x=df_agg.index, y=p(x_numeric), mode='lines', name='Trend', line=dict(color='red', width=2, dash='dash')))
+                    fig.update_layout(title=title, xaxis_title="Date", yaxis_title=numeric_cols[selected_column], height=500, hovermode='x unified')
+                    st.plotly_chart(fig, use_container_width=True)
 
-                if file_a is not None and file_b is not None:
+                    stat_c1, stat_c2, stat_c3, stat_c4 = st.columns(4)
+                    with stat_c1:
+                        st.metric("Mean", f"{df_agg.mean():.2f}")
+                    with stat_c2:
+                        st.metric("Median", f"{df_agg.median():.2f}")
+                    with stat_c3:
+                        st.metric("Min", f"{df_agg.min():.2f}")
+                    with stat_c4:
+                        st.metric("Max", f"{df_agg.max():.2f}")
+
+                    if z is not None:
+                        direction = "📈 Increasing" if z[0] > 0 else "📉 Decreasing"
+                        st.write(f"**Trend:** {direction} (slope: {z[0]:.4f} per {aggregation.lower()[:-2] if aggregation != 'Daily' else 'day'})")
+
+                if mode == "Full Timeline":
                     try:
-                        df_a_raw, date_col_a = load_wwtp_csv(file_a)
-                        df_b_raw, date_col_b = load_wwtp_csv(file_b)
-                    except Exception as e:
-                        st.error(f"Error loading one of the files: {e}")
-                        st.stop()
-
-                    dp_a_auto = detect_parameters(df_a_raw, threshold=55)
-                    dp_b_auto = detect_parameters(df_b_raw, threshold=55)
-
-                    st.caption(f"Period A: {df_a_raw[date_col_a].min().date()} to {df_a_raw[date_col_a].max().date()} ({len(df_a_raw)} records)")
-                    with st.expander("📝 Confirm Period A column mapping", expanded=False):
-                        dp_a = render_mapping_editor(dp_a_auto, df_a_raw.columns, key_prefix="period_a")
-
-                    st.caption(f"Period B: {df_b_raw[date_col_b].min().date()} to {df_b_raw[date_col_b].max().date()} ({len(df_b_raw)} records)")
-                    with st.expander("📝 Confirm Period B column mapping", expanded=False):
-                        dp_b = render_mapping_editor(dp_b_auto, df_b_raw.columns, key_prefix="period_b")
-
-                    # Only offer parameters confirmed as present in BOTH files
-                    shared_keys = [k for k in dp_a if dp_a[k]['column'] and dp_b.get(k, {}).get('column')]
-
-                    if not shared_keys:
-                        st.warning("No parameter is confirmed in both files yet. Check the mapping tables above.")
-                    else:
-                        def label_for(k):
-                            name = DEWATERING_KPI_DEFINITIONS.get(k, {}).get('name') or THICKENING_KPI_DEFINITIONS.get(k, {}).get('name') or k
-                            return f"{name}  [A: {dp_a[k]['column']}  |  B: {dp_b[k]['column']}]"
-
-                        sel_col1, sel_col2 = st.columns(2)
-                        with sel_col1:
-                            selected_key = st.selectbox("Select Indicator (present in both files)", shared_keys, format_func=label_for)
-                        with sel_col2:
-                            aggregation = st.selectbox("Aggregation Period", ["Daily", "Weekly", "Monthly", "Quarterly"], key="benchmark_agg")
-
-                        col_a_name = dp_a[selected_key]['column']
-                        col_b_name = dp_b[selected_key]['column']
-                        unit_a = dp_a[selected_key]['unit']
-
-                        df_a_s = df_a_raw[[date_col_a, col_a_name]].copy()
-                        df_a_s[date_col_a] = pd.to_datetime(df_a_s[date_col_a])
-                        df_a_s[col_a_name] = pd.to_numeric(df_a_s[col_a_name], errors='coerce')
-                        df_a_s = df_a_s.dropna()
-
-                        df_b_s = df_b_raw[[date_col_b, col_b_name]].copy()
-                        df_b_s[date_col_b] = pd.to_datetime(df_b_s[date_col_b])
-                        df_b_s[col_b_name] = pd.to_numeric(df_b_s[col_b_name], errors='coerce')
-                        df_b_s = df_b_s.dropna()
-
-                        if len(df_a_s) == 0 or len(df_b_s) == 0:
-                            st.warning("One of the selected columns has no valid numeric data.")
+                        df_agg = df_yoy.set_index(date_col)[selected_column].resample(freq_map[aggregation]).mean().dropna()
+                        if len(df_agg) > 0:
+                            plot_series(df_agg, f"{selected_column} - {aggregation} Aggregation (Full Timeline)")
                         else:
-                            agg_a = df_a_s.set_index(date_col_a)[col_a_name].resample(freq_map[aggregation]).mean().dropna()
-                            agg_b = df_b_s.set_index(date_col_b)[col_b_name].resample(freq_map[aggregation]).mean().dropna()
+                            st.warning("No data available after aggregation")
+                    except Exception as e:
+                        st.error(f"Error processing data: {e}")
 
-                            label_a = f"Period A ({df_a_s[date_col_a].min().strftime('%b %Y')} - {df_a_s[date_col_a].max().strftime('%b %Y')})"
-                            label_b = f"Period B ({df_b_s[date_col_b].min().strftime('%b %Y')} - {df_b_s[date_col_b].max().strftime('%b %Y')})"
+                elif mode == "Custom Period":
+                    date_range = st.date_input("Select Date Range", value=(data_min, data_max), min_value=data_min, max_value=data_max)
+                    if isinstance(date_range, tuple) and len(date_range) == 2:
+                        start_d, end_d = date_range
+                        mask = (df_yoy[date_col].dt.date >= start_d) & (df_yoy[date_col].dt.date <= end_d)
+                        df_period = df_yoy[mask]
+                        if len(df_period) == 0:
+                            st.warning("No data in the selected range")
+                        else:
+                            try:
+                                df_agg = df_period.set_index(date_col)[selected_column].resample(freq_map[aggregation]).mean().dropna()
+                                if len(df_agg) > 0:
+                                    plot_series(df_agg, f"{selected_column} - {start_d.strftime('%b %d, %Y')} to {end_d.strftime('%b %d, %Y')}")
+                                else:
+                                    st.warning("No data available after aggregation for this range")
+                            except Exception as e:
+                                st.error(f"Error processing data: {e}")
+                    else:
+                        st.info("👆 Select both a start and end date to continue")
 
-                            fig = go.Figure()
-                            fig.add_trace(go.Scatter(x=list(range(len(agg_a))), y=agg_a.values, mode='lines+markers', name=label_a, line=dict(color='#1f77b4', width=3)))
-                            fig.add_trace(go.Scatter(x=list(range(len(agg_b))), y=agg_b.values, mode='lines+markers', name=label_b, line=dict(color='#ff7f0e', width=3)))
-                            fig.update_layout(
-                                title=f"Period A vs Period B: {label_for(selected_key).split('[')[0].strip()}",
-                                xaxis_title=f"{aggregation} Period Offset (0 = start of each period)",
-                                yaxis_title=unit_a, height=500, hovermode='x unified',
-                            )
-                            st.plotly_chart(fig, use_container_width=True)
+                else:  # Period A vs Period B (Benchmark) - defined by date ranges within the same file
+                    st.write("**Define two date ranges** (e.g., Jan–Jun 2025 vs Jan–Jun 2026) and the app will pull the matching data for each and plot them together.")
+                    pc1, pc2 = st.columns(2)
+                    with pc1:
+                        st.markdown("**Period A**")
+                        a_range = st.date_input("Period A date range", value=(data_min, data_min), min_value=data_min, max_value=data_max, key="period_a_range")
+                    with pc2:
+                        st.markdown("**Period B**")
+                        b_range = st.date_input("Period B date range", value=(data_max, data_max), min_value=data_min, max_value=data_max, key="period_b_range")
 
-                            st.subheader("📊 Comparison Statistics")
-                            stat_df = pd.DataFrame({
-                                'Metric': ['Mean', 'Median', 'Min', 'Max', 'Std Dev'],
-                                label_a: [agg_a.mean(), agg_a.median(), agg_a.min(), agg_a.max(), agg_a.std()],
-                                label_b: [agg_b.mean(), agg_b.median(), agg_b.min(), agg_b.max(), agg_b.std()],
-                            })
-                            stat_df['% Change (A→B)'] = ((stat_df[label_b] - stat_df[label_a]) / stat_df[label_a] * 100)
-                            st.dataframe(stat_df.round(3), use_container_width=True)
+                    if isinstance(a_range, tuple) and len(a_range) == 2 and isinstance(b_range, tuple) and len(b_range) == 2:
+                        a_start, a_end = a_range
+                        b_start, b_end = b_range
+                        mask_a = (df_yoy[date_col].dt.date >= a_start) & (df_yoy[date_col].dt.date <= a_end)
+                        mask_b = (df_yoy[date_col].dt.date >= b_start) & (df_yoy[date_col].dt.date <= b_end)
+                        df_a = df_yoy[mask_a].copy()
+                        df_b = df_yoy[mask_b].copy()
 
-                            if agg_a.mean() != 0:
-                                pct_change_mean = (agg_b.mean() - agg_a.mean()) / agg_a.mean() * 100
-                                direction = "increased" if pct_change_mean > 0 else "decreased"
-                                st.info(f"**{col_a_name} / {col_b_name}** {direction} by **{abs(pct_change_mean):.1f}%** from Period A to Period B")
-                else:
-                    st.info("👆 Upload both a Period A and a Period B CSV to compare them.")
+                        if len(df_a) == 0 or len(df_b) == 0:
+                            st.warning("One or both periods have no data. Adjust the date ranges above.")
+                        else:
+                            try:
+                                agg_a = df_a.set_index(date_col)[selected_column].resample(freq_map[aggregation]).mean().dropna()
+                                agg_b = df_b.set_index(date_col)[selected_column].resample(freq_map[aggregation]).mean().dropna()
+
+                                label_a = f"Period A: {a_start.strftime('%b %d, %Y')} - {a_end.strftime('%b %d, %Y')}"
+                                label_b = f"Period B: {b_start.strftime('%b %d, %Y')} - {b_end.strftime('%b %d, %Y')}"
+
+                                fig = go.Figure()
+                                fig.add_trace(go.Scatter(x=list(range(len(agg_a))), y=agg_a.values, mode='lines+markers', name=label_a, line=dict(color='#1f77b4', width=3)))
+                                fig.add_trace(go.Scatter(x=list(range(len(agg_b))), y=agg_b.values, mode='lines+markers', name=label_b, line=dict(color='#ff7f0e', width=3)))
+                                fig.update_layout(
+                                    title=f"Benchmark Comparison: {selected_column}",
+                                    xaxis_title=f"{aggregation} Period Offset (0 = start of each period)",
+                                    yaxis_title=numeric_cols[selected_column], height=500, hovermode='x unified',
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+
+                                st.subheader("📊 Comparison Statistics")
+                                stat_df = pd.DataFrame({
+                                    'Metric': ['Mean', 'Median', 'Min', 'Max', 'Std Dev'],
+                                    label_a: [agg_a.mean(), agg_a.median(), agg_a.min(), agg_a.max(), agg_a.std()],
+                                    label_b: [agg_b.mean(), agg_b.median(), agg_b.min(), agg_b.max(), agg_b.std()],
+                                })
+                                stat_df['% Change (A→B)'] = ((stat_df[label_b] - stat_df[label_a]) / stat_df[label_a] * 100)
+                                st.dataframe(stat_df.round(3), use_container_width=True)
+
+                                if agg_a.mean() != 0:
+                                    pct_change_mean = (agg_b.mean() - agg_a.mean()) / agg_a.mean() * 100
+                                    direction = "increased" if pct_change_mean > 0 else "decreased"
+                                    st.info(f"**{selected_column}** {direction} by **{abs(pct_change_mean):.1f}%** from Period A to Period B")
+                            except Exception as e:
+                                st.error(f"Error processing comparison: {e}")
+                    else:
+                        st.info("👆 Select both a start and end date for each period to continue")
 
     # ============================================================
     # TAB 4: CORRELATION ANALYSIS
@@ -1289,18 +1281,6 @@ else:
 
             if strong_corrs:
                 st.dataframe(pd.DataFrame(strong_corrs), use_container_width=True)
-                st.divider()
-                st.subheader("📈 Scatter Plots - Strong Correlations")
-                for i, corr_pair in enumerate(strong_corrs[:5]):
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.write(f"**{corr_pair['Variable 1']} vs {corr_pair['Variable 2']}**")
-                        st.caption(f"Correlation: {corr_pair['Correlation']:.3f}")
-                    with c2:
-                        st.caption(corr_pair['Interpretation'])
-                    fig_scatter = correlation_analyzer.create_scatter_plot(corr_pair['Variable 1'], corr_pair['Variable 2'])
-                    st.plotly_chart(fig_scatter, use_container_width=True, key=f"scatter_{i}")
-                    st.divider()
             else:
                 st.info("No strong correlations found (threshold: |r| ≥ 0.7)")
                 st.subheader("📊 Moderate Correlations (0.5 ≤ |r| < 0.7)")
@@ -1310,6 +1290,24 @@ else:
                     st.dataframe(pd.DataFrame(moderate_corrs), use_container_width=True)
                 else:
                     st.info("No moderate correlations found")
+
+            st.divider()
+            st.subheader("📈 Explore a Relationship")
+            st.write("Pick any two confirmed parameters to plot against each other.")
+            numeric_col_list = list(correlation_analyzer.get_numeric_data().columns)
+            default_x = strong_corrs[0]['Variable 1'] if strong_corrs else numeric_col_list[0]
+            default_y = strong_corrs[0]['Variable 2'] if strong_corrs else (numeric_col_list[1] if len(numeric_col_list) > 1 else numeric_col_list[0])
+            sc1, sc2 = st.columns(2)
+            with sc1:
+                x_var = st.selectbox("X-axis", numeric_col_list, index=numeric_col_list.index(default_x) if default_x in numeric_col_list else 0, key="scatter_x_var")
+            with sc2:
+                y_default_idx = numeric_col_list.index(default_y) if default_y in numeric_col_list else (1 if len(numeric_col_list) > 1 else 0)
+                y_var = st.selectbox("Y-axis", numeric_col_list, index=y_default_idx, key="scatter_y_var")
+            if x_var == y_var:
+                st.info("Pick two different parameters to see a scatter plot.")
+            else:
+                fig_scatter = correlation_analyzer.create_scatter_plot(x_var, y_var)
+                st.plotly_chart(fig_scatter, use_container_width=True, key="interactive_scatter")
 
     # ============================================================
     # TAB 5: DEWATERING
