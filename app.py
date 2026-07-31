@@ -283,6 +283,19 @@ PARAMETER_KEYWORDS = {
     'hauling_cost': ['hauling cost dollars', 'truck hauling cost', 'disposal hauling cost'],
     'dewatering_run_hours': ['dewatering run hours', 'dewatering equipment hours', 'dewatering uptime hours'],
     'thickening_run_hours': ['thickening run hours', 'thickener uptime hours', 'gbt run hours'],
+    'screw_press_hours': ['screw press hours', 'screw press runtime', 'screw press run hours'],
+    'was_flow': ['was flow gpm', 'waste activated sludge flow', 'was flow mgd', 'was feed flow'],
+    'volatile_solids': ['volatile solids percent', 'vs percent', 'vs percent solids', 'volatile solids concentration'],
+    'sludge_ph': ['sludge ph', 'cake ph', 'feed sludge ph'],
+    'sludge_temperature': ['sludge temperature', 'sludge temp', 'feed sludge temperature'],
+    'wash_water_flow': ['wash water flow gpm', 'belt wash water flow', 'screen wash water flow'],
+    'lime_dose': ['lime dose lbs ton', 'lime addition lbs', 'lime dose lbs per ton'],
+    'ferric_dose': ['ferric chloride dose', 'ferric dose lbs ton', 'ferric addition gpd'],
+    'dewatering_energy': ['dewatering energy kwh', 'centrifuge power kwh', 'dewatering kwh per day'],
+    'thickening_energy': ['thickening energy kwh', 'gbt power kwh', 'thickening kwh per day'],
+    'centrifuge_torque': ['centrifuge differential torque', 'centrifuge torque nm', 'scroll torque'],
+    'rag_removal': ['rag removal lbs', 'screenings removed lbs', 'rags removed count'],
+    'polymer_dilution_water': ['polymer dilution water gpm', 'polymer makedown water', 'makedown water flow'],
 }
 
 
@@ -318,16 +331,30 @@ EXPECTED_UNIT_FAMILIES = {
     'bfp_hours': {'Hours'}, 'rotary_press_hours': {'Hours'},
     'dewatering_run_hours': {'Hours'},
     'thickening_run_hours': {'Hours'},
+    'screw_press_hours': {'Hours'},
+    'was_flow': {'GPM', 'MGD', 'GPD'},
+    'volatile_solids': {'%'},
+    'wash_water_flow': {'GPM', 'MGD', 'GPD'},
+    'lime_dose': {'lbs/ton'},
+    'ferric_dose': {'lbs/ton', 'GPD'},
+    'dewatering_energy': {'kWh'},
+    'thickening_energy': {'kWh'},
+    'centrifuge_torque': {'Nm'},
+    'polymer_dilution_water': {'GPM', 'MGD', 'GPD'},
 }
 
 
 def categorize_param(key):
-    if key.startswith('gbt') or key.startswith('thickener') or key in ('thickening_run_hours', 'daf_air_flow'):
+    if key.startswith('gbt') or key.startswith('thickener') or key in ('thickening_run_hours', 'daf_air_flow', 'was_flow', 'thickening_energy'):
         return 'Thickening'
     if key in ('influent_flow', 'effluent_flow'):
         return 'Flow'
-    if key in ('polymer_cost', 'hauling_cost'):
+    if key in ('polymer_cost', 'hauling_cost', 'gbt_polymer_cost'):
         return 'Cost'
+    if key in ('volatile_solids', 'sludge_ph', 'sludge_temperature'):
+        return 'Sludge Quality'
+    if key in ('lime_dose', 'ferric_dose', 'polymer_dilution_water'):
+        return 'Chemicals'
     return 'Dewatering'
 
 
@@ -347,7 +374,9 @@ REQUIRED_TOKEN_GROUPS = {
     'centrifuge_3_hours': [['centrifuge 3', 'centrifuge3']],
     'bfp_hours': [['bfp', 'belt filter press', 'belt press']],
     'rotary_press_hours': [['rotary press', 'rotary']],
+    'screw_press_hours': [['screw press', 'screw']],
     'bowl_speed': [['bowl', 'centrifuge']],
+    'centrifuge_torque': [['centrifuge']],
     # Cost fields - require the substance word AND a cost word, so different cost columns can't swap
     'polymer_cost': [['poly'], ['cost', 'price', 'dollar']],
     'hauling_cost': [['haul', 'truck', 'disposal']],
@@ -371,6 +400,20 @@ REQUIRED_TOKEN_GROUPS = {
     # DAF and combined thickening hours
     'daf_air_flow': [['daf', 'saturator', 'flotation'], ['air']],
     'thickening_run_hours': [['thicken', 'gbt', 'gravity thickener']],
+    'was_flow': [['waste activated', 'was flow', 'was feed']],
+    # Chemicals - require the substance word so lime/ferric/polymer dosing columns can't swap
+    'lime_dose': [['lime']],
+    'ferric_dose': [['ferric']],
+    'polymer_dilution_water': [['dilution water', 'makedown water', 'make down water', 'make-down water']],
+    # Sludge quality - "volatile solids" spelled out to avoid the bare "vs" abbreviation false-matching
+    'volatile_solids': [['volatile solids', 'vs percent', 'vs %']],
+    'sludge_ph': [['ph']],
+    'sludge_temperature': [['temp']],
+    'wash_water_flow': [['wash water', 'belt wash', 'screen wash']],
+    'rag_removal': [['rag', 'screening']],
+    # Energy - require an energy word AND a domain word, so dewatering/thickening energy can't swap
+    'dewatering_energy': [['energy', 'kwh', 'power'], ['centrifuge', 'bfp', 'belt filter', 'rotary press', 'screw press', 'dewatering']],
+    'thickening_energy': [['energy', 'kwh', 'power'], ['gbt', 'thickener', 'thickening', 'daf']],
 }
 
 # EXCLUDE_TOKENS is the complementary check: disqualify a column outright if it contains a token that
@@ -389,12 +432,14 @@ EXCLUDE_TOKENS = {
     'filtrate_flow': ['gbt', 'thickener', 'thickening'],
     'dewatering_feed': ['gbt', 'thickener', 'thickening'],
     'dewatering_run_hours': ['gbt', 'thickener', 'thickening'],
-    'centrifuge_1_hours': ['gbt', 'thickener', 'thickening', 'bfp', 'rotary'],
-    'centrifuge_2_hours': ['gbt', 'thickener', 'thickening', 'bfp', 'rotary'],
-    'centrifuge_3_hours': ['gbt', 'thickener', 'thickening', 'bfp', 'rotary'],
-    'bfp_hours': ['gbt', 'thickener', 'thickening', 'centrifuge', 'rotary'],
-    'rotary_press_hours': ['gbt', 'thickener', 'thickening', 'centrifuge', 'bfp'],
-    'bowl_speed': ['gbt', 'thickener', 'thickening'],
+    'centrifuge_1_hours': ['gbt', 'thickener', 'thickening', 'bfp', 'rotary', 'screw'],
+    'centrifuge_2_hours': ['gbt', 'thickener', 'thickening', 'bfp', 'rotary', 'screw'],
+    'centrifuge_3_hours': ['gbt', 'thickener', 'thickening', 'bfp', 'rotary', 'screw'],
+    'bfp_hours': ['gbt', 'thickener', 'thickening', 'centrifuge', 'rotary', 'screw'],
+    'rotary_press_hours': ['gbt', 'thickener', 'thickening', 'centrifuge', 'bfp', 'screw'],
+    'screw_press_hours': ['gbt', 'thickener', 'thickening', 'centrifuge', 'bfp', 'rotary'],
+    'bowl_speed': ['gbt', 'thickener', 'thickening', 'torque'],
+    'centrifuge_torque': ['bowl speed', 'rpm'],
     'thickener_feed': ['centrifuge', 'bfp', 'rotary press', 'gbt'],
     'thickener_underflow': ['centrifuge', 'bfp', 'rotary press', 'gbt'],
     'thickener_overflow': ['centrifuge', 'bfp', 'rotary press', 'gbt'],
@@ -411,6 +456,8 @@ EXCLUDE_TOKENS = {
     'gbt_3_hours': ['centrifuge', 'bfp', 'rotary press'],
     'thickening_run_hours': ['centrifuge', 'bfp', 'rotary press'],
     'daf_air_flow': ['centrifuge', 'bfp', 'rotary press'],
+    'dewatering_energy': ['gbt', 'thickener', 'thickening', 'daf'],
+    'thickening_energy': ['centrifuge', 'bfp', 'rotary press', 'screw press'],
 }
 
 
@@ -450,9 +497,20 @@ class FuzzyParameterDetector:
                 #   so "Hauling Cost" can never win that slot just because "cost" fuzzy-matches.
                 # - exclude_tokens: column is disqualified if it contains any of these, even if it
                 #   would otherwise score well (stops cross-domain/cross-equipment contamination).
-                if req_groups and not all(any(t in col_clean for t in group) for group in req_groups):
+                # Short single-word tokens (<=3 letters, e.g. "ph", "was", "rag") use strict word-
+                # boundary matching so they don't false-match inside "graph"/"wash"/"storage". Longer
+                # tokens and multi-word phrases (e.g. "poly", "haul", "temp", "centrifuge 1") use
+                # substring/prefix matching so they still match "polymer", "hauling", "temperature".
+                padded_col = f' {col_clean} '
+
+                def _token_hits(token):
+                    if ' ' not in token and len(token) <= 3:
+                        return f' {token} ' in padded_col
+                    return token in col_clean
+
+                if req_groups and not all(any(_token_hits(t) for t in group) for group in req_groups):
                     continue
-                if excl_tokens and any(t in col_clean for t in excl_tokens):
+                if excl_tokens and any(_token_hits(t) for t in excl_tokens):
                     continue
 
                 col_best, best_kw_len = 0, 1
@@ -494,8 +552,16 @@ class FuzzyParameterDetector:
     @staticmethod
     def _detect_unit(column_name):
         col_lower = column_name.lower()
+        words = col_lower.replace('/', ' ').replace('-', ' ').split()
         if any(x in col_lower for x in ['ntu']):
             return 'NTU'
+        # Word-boundary check (not substring) so "ph" doesn't false-match inside "graph"/"phosphate".
+        if 'ph' in words:
+            return 'pH'
+        if 'kwh' in col_lower:
+            return 'kWh'
+        if 'temp' in col_lower or 'temperature' in col_lower:
+            return 'Temp'
         # Only classify as a per-ton ratio if there's an actual ratio marker (a slash or "per"
         # immediately next to "ton"/"dt") - NOT just because the words "poly" and "ton" both
         # appear somewhere in a longer, unrelated compound column name.
@@ -1503,61 +1569,85 @@ else:
     # ============================================================
     with tab3:
         st.header("📈 Trend & Benchmark Analysis")
-        st.write("Analyze a single indicator over time, over a custom date range, or benchmark two date ranges side-by-side — all from your one uploaded file.")
+        st.write("Analyze any column over time, over a custom date range, or benchmark two date ranges side-by-side — all from your one uploaded file.")
 
         numeric_cols = {}
-        for param_info in detected_params.values():
-            if param_info['column']:
-                numeric_cols[param_info['column']] = param_info['unit']
+        for col in df.columns:
+            if col == date_col:
+                continue
+            s = pd.to_numeric(df[col], errors='coerce')
+            if s.notna().sum() > 0:
+                matched_unit = next((p['unit'] for p in detected_params.values() if p['column'] == col), None)
+                numeric_cols[col] = matched_unit or 'Unknown'
 
         if not numeric_cols:
-            st.warning("No confirmed numeric columns available. Go back to **Confirm Data Mapping** above.")
+            st.warning("No numeric columns found in your data.")
         else:
-            mode = st.radio("Analysis Mode", ["Full Timeline", "Custom Period", "Period A vs Period B (Benchmark)"], horizontal=True)
+            analyze_mode = st.radio("Analyze", ["Single Indicator", "Ratio (Numerator ÷ Denominator)"], horizontal=True,
+                                     help="A ratio lets you build any custom metric on the fly, e.g. Polymer Cost ÷ Dry Tons, without needing it to be a predefined KPI.")
 
-            col_s1, col_s2, col_s3 = st.columns(3)
-            with col_s1:
+            if analyze_mode == "Single Indicator":
                 selected_column = st.selectbox("Select Indicator", list(numeric_cols.keys()), format_func=lambda x: f"{x} ({numeric_cols[x]})")
+                working_label = selected_column
+                working_unit = numeric_cols[selected_column]
+                working_series = pd.to_numeric(df[selected_column], errors='coerce')
+            else:
+                rc1, rc2 = st.columns(2)
+                col_list = list(numeric_cols.keys())
+                with rc1:
+                    numerator_col = st.selectbox("Numerator", col_list, format_func=lambda x: f"{x} ({numeric_cols[x]})", key="ratio_numerator")
+                with rc2:
+                    default_denom_idx = 1 if len(col_list) > 1 else 0
+                    denominator_col = st.selectbox("Denominator", col_list, index=default_denom_idx, format_func=lambda x: f"{x} ({numeric_cols[x]})", key="ratio_denominator")
+                num_series = pd.to_numeric(df[numerator_col], errors='coerce')
+                denom_series = pd.to_numeric(df[denominator_col], errors='coerce')
+                working_series = (num_series / denom_series).replace([np.inf, -np.inf], np.nan)
+                working_label = f"{numerator_col} ÷ {denominator_col}"
+                num_unit, denom_unit = numeric_cols[numerator_col], numeric_cols[denominator_col]
+                working_unit = f"{num_unit}/{denom_unit}" if 'Unknown' not in (num_unit, denom_unit) else "ratio"
+                if numerator_col == denominator_col:
+                    st.info("Numerator and denominator are the same column, so this ratio will just be 1.0 - pick two different columns.")
+
+            col_s2, col_s3 = st.columns(2)
             with col_s2:
                 aggregation = st.selectbox("Aggregation Period", ["Daily", "Weekly", "Monthly", "Quarterly"])
             with col_s3:
-                agg_method = st.selectbox("Aggregation Method", ["Average", "Total"], help="How to combine readings within each period, e.g. weekly average vs. weekly total.")
+                agg_method = st.selectbox("Aggregation Method", ["Average", "Total"], help="How to combine readings within each period, e.g. weekly average vs. weekly total. For ratios, Average is almost always the right choice.")
 
             agg_func = 'sum' if agg_method == 'Total' else 'mean'
             freq_map = {"Daily": 'D', "Weekly": 'W', "Monthly": 'MS', "Quarterly": 'QS'}
 
-            df_yoy = df[[date_col, selected_column]].copy()
-            df_yoy[date_col] = pd.to_datetime(df_yoy[date_col])
-            df_yoy[selected_column] = pd.to_numeric(df_yoy[selected_column], errors='coerce')
-            df_yoy = df_yoy.dropna()
+            mode = st.radio("Analysis Mode", ["Full Timeline", "Custom Period", "Period A vs Period B (Benchmark)"], horizontal=True)
+
+            df_yoy = pd.DataFrame({date_col: pd.to_datetime(df[date_col]), 'value': working_series}).dropna()
 
             if len(df_yoy) == 0:
-                st.warning("No valid numeric data for the selected indicator")
+                st.warning("No valid numeric data for this selection.")
             else:
                 data_min = df_yoy[date_col].min().date()
                 data_max = df_yoy[date_col].max().date()
 
                 def plot_series(df_agg, title):
                     fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=df_agg.index, y=df_agg.values, mode='lines+markers', name=selected_column, line=dict(color='#1f77b4', width=2), marker=dict(size=6)))
+                    fig.add_trace(go.Scatter(x=df_agg.index, y=df_agg.values, mode='lines+markers', name=working_label, line=dict(color='#1f77b4', width=2), marker=dict(size=6)))
                     x_numeric = np.arange(len(df_agg))
                     z = None
                     if len(x_numeric) > 1:
                         z = np.polyfit(x_numeric, df_agg.values, 1)
                         p = np.poly1d(z)
                         fig.add_trace(go.Scatter(x=df_agg.index, y=p(x_numeric), mode='lines', name='Trend', line=dict(color='red', width=2, dash='dash')))
-                    fig.update_layout(title=title, xaxis_title="Date", yaxis_title=numeric_cols[selected_column], height=500, hovermode='x unified')
+                    fig.update_layout(title=title, xaxis_title="Date", yaxis_title=working_unit, height=500, hovermode='x unified')
                     st.plotly_chart(fig, use_container_width=True)
 
                     stat_c1, stat_c2, stat_c3, stat_c4 = st.columns(4)
                     with stat_c1:
-                        st.metric("Mean", f"{df_agg.mean():.2f}")
+                        st.metric("Mean", f"{df_agg.mean():.3f}")
                     with stat_c2:
-                        st.metric("Median", f"{df_agg.median():.2f}")
+                        st.metric("Median", f"{df_agg.median():.3f}")
                     with stat_c3:
-                        st.metric("Min", f"{df_agg.min():.2f}")
+                        st.metric("Min", f"{df_agg.min():.3f}")
                     with stat_c4:
-                        st.metric("Max", f"{df_agg.max():.2f}")
+                        st.metric("Max", f"{df_agg.max():.3f}")
 
                     if z is not None:
                         direction = "📈 Increasing" if z[0] > 0 else "📉 Decreasing"
@@ -1565,9 +1655,9 @@ else:
 
                 if mode == "Full Timeline":
                     try:
-                        df_agg = df_yoy.set_index(date_col)[selected_column].resample(freq_map[aggregation]).agg(agg_func).dropna()
+                        df_agg = df_yoy.set_index(date_col)['value'].resample(freq_map[aggregation]).agg(agg_func).dropna()
                         if len(df_agg) > 0:
-                            plot_series(df_agg, f"{selected_column} - {aggregation} Aggregation (Full Timeline)")
+                            plot_series(df_agg, f"{working_label} - {aggregation} Aggregation (Full Timeline)")
                         else:
                             st.warning("No data available after aggregation")
                     except Exception as e:
@@ -1583,9 +1673,9 @@ else:
                             st.warning("No data in the selected range")
                         else:
                             try:
-                                df_agg = df_period.set_index(date_col)[selected_column].resample(freq_map[aggregation]).agg(agg_func).dropna()
+                                df_agg = df_period.set_index(date_col)['value'].resample(freq_map[aggregation]).agg(agg_func).dropna()
                                 if len(df_agg) > 0:
-                                    plot_series(df_agg, f"{selected_column} - {start_d.strftime('%b %d, %Y')} to {end_d.strftime('%b %d, %Y')}")
+                                    plot_series(df_agg, f"{working_label} - {start_d.strftime('%b %d, %Y')} to {end_d.strftime('%b %d, %Y')}")
                                 else:
                                     st.warning("No data available after aggregation for this range")
                             except Exception as e:
@@ -1616,8 +1706,8 @@ else:
                             st.warning("One or both periods have no data. Adjust the date ranges above.")
                         else:
                             try:
-                                agg_a = df_a.set_index(date_col)[selected_column].resample(freq_map[aggregation]).agg(agg_func).dropna()
-                                agg_b = df_b.set_index(date_col)[selected_column].resample(freq_map[aggregation]).agg(agg_func).dropna()
+                                agg_a = df_a.set_index(date_col)['value'].resample(freq_map[aggregation]).agg(agg_func).dropna()
+                                agg_b = df_b.set_index(date_col)['value'].resample(freq_map[aggregation]).agg(agg_func).dropna()
 
                                 label_a = f"Period A: {a_start.strftime('%b %d, %Y')} - {a_end.strftime('%b %d, %Y')}"
                                 label_b = f"Period B: {b_start.strftime('%b %d, %Y')} - {b_end.strftime('%b %d, %Y')}"
@@ -1642,20 +1732,20 @@ else:
                                 fig.add_trace(go.Scatter(
                                     x=offset_a, y=agg_a.values, mode='lines+markers', name=label_a,
                                     line=dict(color='#1f77b4', width=3), customdata=dates_a_text,
-                                    hovertemplate=f"{label_a}<br>%{{customdata}}: %{{y:.2f}}<extra></extra>",
+                                    hovertemplate=f"{label_a}<br>%{{customdata}}: %{{y:.3f}}<extra></extra>",
                                 ))
                                 fig.add_trace(go.Scatter(
                                     x=offset_b, y=agg_b.values, mode='lines+markers', name=label_b,
                                     line=dict(color='#ff7f0e', width=3), customdata=dates_b_text,
-                                    hovertemplate=f"{label_b}<br>%{{customdata}}: %{{y:.2f}}<extra></extra>",
+                                    hovertemplate=f"{label_b}<br>%{{customdata}}: %{{y:.3f}}<extra></extra>",
                                 ))
                                 fig.update_layout(
-                                    title=f"Benchmark Comparison: {selected_column} ({aggregation}, {agg_method})",
+                                    title=f"Benchmark Comparison: {working_label} ({aggregation}, {agg_method})",
                                     xaxis=dict(
                                         title="Date (Period A dates shown; Period B is aligned to the same relative position - hover for its actual date)",
                                         tickmode='array', tickvals=tickvals, ticktext=ticktext, tickangle=-30,
                                     ),
-                                    yaxis_title=numeric_cols[selected_column], height=520, hovermode='closest',
+                                    yaxis_title=working_unit, height=520, hovermode='closest',
                                     margin=dict(b=110),
                                 )
                                 st.plotly_chart(fig, use_container_width=True)
@@ -1667,12 +1757,12 @@ else:
                                     label_b: [agg_b.mean(), agg_b.median(), agg_b.min(), agg_b.max(), agg_b.std()],
                                 })
                                 stat_df['% Change (A→B)'] = ((stat_df[label_b] - stat_df[label_a]) / stat_df[label_a] * 100)
-                                st.dataframe(stat_df.round(3), use_container_width=True)
+                                st.dataframe(stat_df.round(4), use_container_width=True)
 
                                 if agg_a.mean() != 0:
                                     pct_change_mean = (agg_b.mean() - agg_a.mean()) / agg_a.mean() * 100
                                     direction = "increased" if pct_change_mean > 0 else "decreased"
-                                    st.info(f"**{selected_column}** {direction} by **{abs(pct_change_mean):.1f}%** from Period A to Period B")
+                                    st.info(f"**{working_label}** {direction} by **{abs(pct_change_mean):.1f}%** from Period A to Period B")
                             except Exception as e:
                                 st.error(f"Error processing comparison: {e}")
                     else:
