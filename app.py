@@ -97,7 +97,9 @@ THICKENING_KPI_DEFINITIONS = {
     'hydraulic_loading_rate': {'name': 'Hydraulic Loading Rate (gpd/sq ft)', 'description': 'Feed flow relative to thickener surface area - a standard design/operating check alongside solids loading.'},
     'solids_loading_rate': {'name': 'Solids Loading Rate (lbs DS/day/sq ft)', 'description': 'Thickener surface-area efficiency.'},
     'retention_time': {'name': 'Retention Time (hours)', 'description': 'Tank volume ÷ feed flow. Applies to gravity thickeners (tank-based); not meaningful for GBTs, which are continuous mechanical units.'},
-    'thickening_polymer_dose': {'name': 'Thickening Polymer Dose (lbs active/ton DS)', 'description': 'Conditioning polymer usage ahead of/at the thickener, per ton of dry solids.'},
+    'thickening_polymer_dose': {'name': 'Thickening Polymer Dose (lbs active/ton DS)', 'description': 'Conditioning polymer usage per ton of dry solids. Only rated against a target when the confirmed column (or dry-tons normalization) actually represents a per-ton dose - see the calculation basis on each recommendation for exactly how this was derived for your data.'},
+    'thickening_polymer_total': {'name': 'Total Thickening Polymer Usage', 'description': 'Raw polymer mass or volume used per day, reported as-is when there isn\'t enough data (e.g. no dry-tons figure) to normalize it into a per-ton dose.'},
+    'thickening_polymer_unit_cost': {'name': 'Thickening Polymer Unit Cost ($/lb product)', 'description': 'Polymer cost ÷ polymer mass purchased - a straightforward economic check that doesn\'t require any throughput data.'},
     'daf_air_to_solids_ratio': {'name': 'DAF Air-to-Solids Ratio', 'description': 'Applies only to DAF thickeners. Requires calibrated air mass flow and solids mass flow instrumentation most spreadsheets don\'t log, so this is usually reported as insufficient data rather than guessed at.'},
     'solids_capture_efficiency': {'name': 'Solids Capture Efficiency (%)', 'description': 'Percentage of incoming solids retained in thickened sludge.'},
     'rake_torque_monitor': {'name': 'Rake Torque (Nm)', 'description': 'Gravity thickener rake drive torque. Rising trend can indicate rag/solids buildup - compare against the manufacturer-rated limit.'},
@@ -269,7 +271,12 @@ PARAMETER_KEYWORDS = {
     'gbt_underflow': ['gbt underflow percent', 'gravity belt thickener underflow', 'belt thickener underflow solids'],
     'gbt_overflow': ['gbt overflow tss', 'gravity belt thickener overflow', 'belt thickener overflow tss'],
     'gbt_belt_speed': ['gbt belt speed', 'gravity belt speed', 'belt thickener speed'],
-    'gbt_polymer': ['gbt polymer dose', 'gravity belt polymer dose', 'belt thickener polymer', 'daf polymer', 'thickening polymer'],
+    'gbt_polymer': ['gbt polymer lbs', 'gbt polymer dose', 'gravity belt polymer dose', 'belt thickener polymer', 'daf polymer', 'thickening polymer'],
+    'gbt_polymer_gpd': ['gbt polymer gpd', 'gravity belt polymer gpd', 'thickening polymer gpd feed rate'],
+    'gbt_polymer_cost': ['gbt polymer cost', 'gravity belt polymer cost', 'thickening polymer cost dollars'],
+    'gbt_1_hours': ['gbt 1 runtime hours', 'gbt1 runtime', 'gbt 1 hours'],
+    'gbt_2_hours': ['gbt 2 runtime hours', 'gbt2 runtime', 'gbt 2 hours'],
+    'gbt_3_hours': ['gbt 3 runtime hours', 'gbt3 runtime', 'gbt 3 hours'],
     'daf_air_flow': ['daf air flow', 'saturator air flow', 'recycle air scfm', 'air flow scfm'],
     'bowl_speed': ['bowl speed rpm', 'centrifuge bowl speed', 'centrifuge rpm'],
     'polymer_cost': ['polymer cost dollars', 'polymer price', 'polymer dollar cost', 'chemical cost polymer'],
@@ -301,6 +308,9 @@ EXPECTED_UNIT_FAMILIES = {
     'gbt_overflow': {'NTU', 'mg/L'},
     'gbt_belt_speed': {'RPM'},
     'gbt_polymer': {'lbs/ton'},
+    'gbt_polymer_gpd': {'GPD'},
+    'gbt_polymer_cost': {'$'},
+    'gbt_1_hours': {'Hours'}, 'gbt_2_hours': {'Hours'}, 'gbt_3_hours': {'Hours'},
     'bowl_speed': {'RPM'},
     'polymer_cost': {'$'},
     'hauling_cost': {'$'},
@@ -652,6 +662,7 @@ class KPICalculator:
         is_centrifuge = any('centrifuge' in e for e in dew_equip)
         is_belt = any('belt' in e for e in dew_equip)
 
+        cake_col = self.dp.get('cake_quality', {}).get('column')
         cake = self._col('cake_quality')
         if cake is not None:
             v = cake.mean()
@@ -661,50 +672,60 @@ class KPICalculator:
                 lo, hi = 18, 25
             else:
                 lo, hi = 18, 30
-            k['cake_solids'] = {'value': v, 'unit': '%', 'target': f'{lo}-{hi}%', 'status': self._status_range(v, lo, hi)}
+            k['cake_solids'] = {'value': v, 'unit': '%', 'target': f'{lo}-{hi}%', 'status': self._status_range(v, lo, hi),
+                                 'basis': f"Average of **{cake_col}**."}
             moisture = 100 - v
-            k['cake_moisture'] = {'value': moisture, 'unit': '%', 'target': '75-82%', 'status': self._status_range(moisture, 75, 82)}
+            k['cake_moisture'] = {'value': moisture, 'unit': '%', 'target': '75-82%', 'status': self._status_range(moisture, 75, 82),
+                                   'basis': f"100% − average of **{cake_col}**."}
         else:
             k['cake_solids'] = self._insufficient(['Cake solids / cake quality (%) column'])
             k['cake_moisture'] = self._insufficient(['Cake solids / cake quality (%) column'])
 
+        dry_col = self.dp.get('dry_tons', {}).get('column')
+        wet_col = self.dp.get('wet_tons', {}).get('column')
         dry = self._col('dry_tons')
         wet = self._col('wet_tons')
         if dry is not None and wet is not None and wet.mean() > 0:
             ratio = dry.mean() / wet.mean()
-            k['dry_wet_ratio'] = {'value': ratio, 'unit': '', 'target': '≥0.25 (excellent), 0.20-0.25 (good)', 'status': self._status_lower(ratio, 0.20)}
+            k['dry_wet_ratio'] = {'value': ratio, 'unit': '', 'target': '≥0.25 (excellent), 0.20-0.25 (good)', 'status': self._status_lower(ratio, 0.20),
+                                   'basis': f"Average **{dry_col}** ÷ average **{wet_col}**."}
         else:
             k['dry_wet_ratio'] = self._insufficient(['Dry tons and Wet tons columns (both, with nonzero wet tons)'])
 
+        poly_col = self.dp.get('polymer', {}).get('column')
+        poly_raw_col = self.dp.get('polymer_raw', {}).get('column')
         poly_active = self._col('polymer')
         poly_raw = self._col('polymer_raw')
         if poly_active is not None:
             v = poly_active.mean()
-            k['active_polymer_dose'] = {'value': v, 'unit': 'lbs/ton', 'target': '5-15 lbs active/ton DS', 'status': self._status_range(v, 5, 15)}
+            k['active_polymer_dose'] = {'value': v, 'unit': 'lbs/ton', 'target': '5-15 lbs active/ton DS', 'status': self._status_range(v, 5, 15),
+                                         'basis': f"Average of **{poly_col}**, confirmed as an active-basis lbs/ton dose."}
         else:
             k['active_polymer_dose'] = self._insufficient(['Active polymer dose (lbs active/ton DS) column'])
 
         if poly_raw is not None:
             v = poly_raw.mean()
-            k['raw_polymer_dose'] = {'value': v, 'unit': 'lbs/ton', 'target': 'Varies by product - no universal benchmark', 'status': 'ℹ️ Informational — depends on your polymer product\'s % activity'}
+            k['raw_polymer_dose'] = {'value': v, 'unit': 'lbs/ton', 'target': 'Varies by product - no universal benchmark', 'status': "ℹ️ Informational — depends on your polymer product's % activity",
+                                      'basis': f"Average of **{poly_raw_col}**."}
         else:
             k['raw_polymer_dose'] = self._insufficient(['Raw/neat polymer dose (lbs product/ton DS) column'])
 
         if poly_active is not None and poly_raw is not None and poly_raw.mean() > 0:
             activity = (poly_active.mean() / poly_raw.mean()) * 100
-            k['polymer_activity_pct'] = {'value': activity, 'unit': '%', 'target': 'Compare to product spec sheet', 'status': 'ℹ️ Informational'}
+            k['polymer_activity_pct'] = {'value': activity, 'unit': '%', 'target': 'Compare to product spec sheet', 'status': 'ℹ️ Informational',
+                                          'basis': f"Average **{poly_col}** ÷ average **{poly_raw_col}** × 100."}
         else:
             k['polymer_activity_pct'] = self._insufficient(['Both active and raw/neat polymer dose columns (to compute % activity)'])
 
         cost_col = self.dp.get('polymer_cost', {}).get('column')
-        dry_col = self.dp.get('dry_tons', {}).get('column')
         if cost_col and dry_col:
             cost_series = pd.to_numeric(self.df[cost_col], errors='coerce')
             dry_series = pd.to_numeric(self.df[dry_col], errors='coerce')
             ratio = (cost_series / (dry_series * 2000)).replace([np.inf, -np.inf], np.nan).dropna()
             if len(ratio) > 0:
                 v = ratio.mean()
-                k['polymer_cost_per_lb'] = {'value': v, 'unit': '$/lb DS', 'target': '$0.05-$0.15/lb DS', 'status': self._status_range(v, 0.05, 0.15)}
+                k['polymer_cost_per_lb'] = {'value': v, 'unit': '$/lb DS', 'target': '$0.05-$0.15/lb DS', 'status': self._status_range(v, 0.05, 0.15),
+                                             'basis': f"Average of (**{cost_col}** ÷ (**{dry_col}** × 2000 lbs/ton))."}
             else:
                 k['polymer_cost_per_lb'] = self._insufficient(['Polymer cost ($) and dry tons columns (valid paired data)'])
         else:
@@ -712,62 +733,74 @@ class KPICalculator:
 
         if dry is not None:
             throughput = dry.mean() * 2000
-            k['dewatering_throughput'] = {'value': throughput, 'unit': 'lbs DS/day', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational'}
+            k['dewatering_throughput'] = {'value': throughput, 'unit': 'lbs DS/day', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational',
+                                           'basis': f"Average **{dry_col}** × 2000 lbs/ton."}
             cake_rate = throughput / 24
-            k['cake_production_rate'] = {'value': cake_rate, 'unit': 'lbs/hour', 'target': '500-2,000 lbs/hour', 'status': self._status_range(cake_rate, 500, 2000)}
+            k['cake_production_rate'] = {'value': cake_rate, 'unit': 'lbs/hour', 'target': '500-2,000 lbs/hour', 'status': self._status_range(cake_rate, 500, 2000),
+                                          'basis': "Dewatering Throughput ÷ 24 hours."}
         else:
             k['dewatering_throughput'] = self._insufficient(['Dry tons / dry solids column'])
             k['cake_production_rate'] = self._insufficient(['Dry tons / dry solids column'])
 
+        dfeed_col = self.dp.get('dewatering_feed', {}).get('column')
         dfeed = self._col('dewatering_feed')
         if dfeed is not None:
-            k['dewatering_feed_rate'] = {'value': dfeed.mean(), 'unit': 'gpm', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational'}
+            k['dewatering_feed_rate'] = {'value': dfeed.mean(), 'unit': 'gpm', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational',
+                                          'basis': f"Average of **{dfeed_col}**."}
         else:
             k['dewatering_feed_rate'] = self._insufficient(['Dewatering feed rate (gpm) column, e.g. centrifuge/BFP feed flow'])
 
+        ft_col = self.dp.get('filtrate_turbidity', {}).get('column')
         filt_turb = self._col('filtrate_turbidity')
         if filt_turb is not None:
             unit = self.dp['filtrate_turbidity']['unit']
             k['filtrate_turbidity'] = self._clarity_kpi(filt_turb.mean(), unit, ntu_target=10, mgl_target=500)
+            k['filtrate_turbidity']['basis'] = f"Average of **{ft_col}** (unit confirmed as {unit})."
         else:
             k['filtrate_turbidity'] = self._insufficient(['Filtrate/centrate turbidity column - none of your columns matched this'])
 
+        ff_col = self.dp.get('filtrate_flow', {}).get('column')
         filt_flow = self._col('filtrate_flow')
         if filt_flow is not None:
             v = filt_flow.mean()
-            k['filtrate_flow_rate'] = {'value': v, 'unit': 'gpm', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational'}
+            k['filtrate_flow_rate'] = {'value': v, 'unit': 'gpm', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational',
+                                        'basis': f"Average of **{ff_col}**."}
         else:
             k['filtrate_flow_rate'] = self._insufficient(['Filtrate/centrate flow rate (gpm) column'])
 
+        fs_col = self.dp.get('feed_solids', {}).get('column')
         feed_solids = self._col('feed_solids')
         if dry is not None and feed_solids is not None and feed_solids.mean() > 0:
             recovery = min((dry.mean() / feed_solids.mean()) * 100, 100)
-            k['solids_recovery'] = {'value': recovery, 'unit': '%', 'target': '>95%', 'status': self._status_lower(recovery, 95)}
+            k['solids_recovery'] = {'value': recovery, 'unit': '%', 'target': '>95%', 'status': self._status_lower(recovery, 95),
+                                     'basis': f"Average **{dry_col}** ÷ average **{fs_col}** × 100 (capped at 100%)."}
         else:
             k['solids_recovery'] = self._insufficient(['Influent/feed solids loading (tons or lbs DS) column - not detected in your data'])
 
         haul_col = self.dp.get('hauling_cost', {}).get('column')
-        wet_col = self.dp.get('wet_tons', {}).get('column')
         if haul_col and wet_col:
             haul_series = pd.to_numeric(self.df[haul_col], errors='coerce')
             wet_series = pd.to_numeric(self.df[wet_col], errors='coerce')
             ratio2 = (haul_series / wet_series).replace([np.inf, -np.inf], np.nan).dropna()
             if len(ratio2) > 0:
-                k['hauling_cost_per_wet_ton'] = {'value': ratio2.mean(), 'unit': '$/wet ton', 'target': 'Varies by hauling contract', 'status': 'ℹ️ Informational'}
+                k['hauling_cost_per_wet_ton'] = {'value': ratio2.mean(), 'unit': '$/wet ton', 'target': 'Varies by hauling contract', 'status': 'ℹ️ Informational',
+                                                  'basis': f"Average of (**{haul_col}** ÷ **{wet_col}**)."}
             else:
                 k['hauling_cost_per_wet_ton'] = self._insufficient(['Hauling cost ($) and wet tons columns (valid paired data)'])
         else:
             k['hauling_cost_per_wet_ton'] = self._insufficient(['Hauling cost ($) column'])
 
         hrs_keys = ['centrifuge_1_hours', 'centrifuge_2_hours', 'centrifuge_3_hours', 'bfp_hours', 'rotary_press_hours', 'dewatering_run_hours']
-        vals = []
+        vals, used_cols = [], []
         for hkey in hrs_keys:
             d = self._col(hkey)
             if d is not None:
                 vals.append((d / 24 * 100).clip(upper=100).mean())
+                used_cols.append(self.dp[hkey]['column'])
         if vals:
             v = float(np.mean(vals))
-            k['equipment_availability'] = {'value': v, 'unit': '%', 'target': '>90%', 'status': self._status_lower(v, 90)}
+            k['equipment_availability'] = {'value': v, 'unit': '%', 'target': '>90%', 'status': self._status_lower(v, 90),
+                                            'basis': f"Average of (Run Hours ÷ 24 × 100) across: {', '.join(f'**{c}**' for c in used_cols)}."}
         else:
             k['equipment_availability'] = self._insufficient(['Equipment run-hours column(s), e.g. daily centrifuge/BFP run hours'])
 
@@ -777,24 +810,43 @@ class KPICalculator:
         k = {}
         thick_equip = [e.lower() for e in self.plant_info.get('thickening_equipment', [])]
         is_daf = any('daf' in e or 'flotation' in e for e in thick_equip)
-        is_gbt = any('belt' in e for e in thick_equip)
+        is_gbt_selected = any('belt' in e for e in thick_equip)
+        has_gbt_columns = any(self.dp.get(kk, {}).get('column') for kk in
+                               ['gbt_underflow', 'gbt_overflow', 'gbt_feed', 'gbt_belt_speed', 'gbt_polymer',
+                                'gbt_polymer_gpd', 'gbt_polymer_cost', 'gbt_1_hours', 'gbt_2_hours', 'gbt_3_hours'])
+        has_gravity_columns = any(self.dp.get(kk, {}).get('column') for kk in
+                                   ['thickener_underflow', 'thickener_overflow', 'thickener_feed', 'thickener_torque'])
+        # Data-driven: if your columns are all named "GBT ...", treat this as a GBT even if the
+        # equipment checkbox in Plant Information wasn't touched.
+        is_gbt = is_gbt_selected or (has_gbt_columns and not has_gravity_columns)
 
+        # Overall plant dry tons - used as an approximation basis if we need to normalize a raw
+        # polymer total into a per-ton dose (see the thickening polymer section below).
+        dry_col = self.dp.get('dry_tons', {}).get('column')
+        dry = self._col('dry_tons')
+
+        uf_col_key = 'thickener_underflow' if self.dp.get('thickener_underflow', {}).get('column') else 'gbt_underflow'
         uf = self._col('thickener_underflow')
         gbt_uf = self._col('gbt_underflow')
         primary_uf = uf if uf is not None else gbt_uf
         if primary_uf is not None:
             v = primary_uf.mean()
             lo, hi = (6, 12) if is_daf else (4, 8)
-            k['thickened_solids'] = {'value': v, 'unit': '%', 'target': f'{lo}-{hi}%', 'status': self._status_range(v, lo, hi)}
+            uf_col = self.dp[uf_col_key]['column']
+            k['thickened_solids'] = {'value': v, 'unit': '%', 'target': f'{lo}-{hi}%', 'status': self._status_range(v, lo, hi),
+                                      'basis': f"Average of **{uf_col}**."}
             lbs_gal = v * 8.34 / 100
-            k['underflow_lbs_gal'] = {'value': lbs_gal, 'unit': 'lbs DS/gal', 'target': 'Higher = less downstream load', 'status': 'ℹ️ Informational'}
+            k['underflow_lbs_gal'] = {'value': lbs_gal, 'unit': 'lbs DS/gal', 'target': 'Higher = less downstream load', 'status': 'ℹ️ Informational',
+                                       'basis': f"Average **{uf_col}** (%) × 8.34 lbs/gal ÷ 100."}
         else:
             k['thickened_solids'] = self._insufficient(['Thickener/GBT underflow solids (%) column'])
             k['underflow_lbs_gal'] = self._insufficient(['Thickener/GBT underflow solids (%) column'])
 
+        fs_col = self.dp.get('feed_solids', {}).get('column')
         feed_solids = self._col('feed_solids')
         if feed_solids is not None:
-            k['feed_solids_concentration'] = {'value': feed_solids.mean(), 'unit': '%', 'target': 'Track trend - context for other thickening KPIs', 'status': 'ℹ️ Informational'}
+            k['feed_solids_concentration'] = {'value': feed_solids.mean(), 'unit': '%', 'target': 'Track trend - context for other thickening KPIs', 'status': 'ℹ️ Informational',
+                                               'basis': f"Average of **{fs_col}**."}
         else:
             k['feed_solids_concentration'] = self._insufficient(['Feed/influent solids concentration (%) column'])
 
@@ -805,19 +857,25 @@ class KPICalculator:
             of_key = 'gbt_overflow'
         if of is not None:
             unit = self.dp[of_key]['unit']
+            of_col = self.dp[of_key]['column']
             k['overflow_turbidity'] = self._clarity_kpi(of.mean(), unit, ntu_target=5, mgl_target=500)
+            k['overflow_turbidity']['basis'] = f"Average of **{of_col}** (unit confirmed as {unit})."
         else:
             k['overflow_turbidity'] = self._insufficient(['Thickener/GBT overflow TSS or turbidity column - none of your columns matched this'])
 
+        feed_key = 'thickener_feed' if self.dp.get('thickener_feed', {}).get('column') else 'gbt_feed'
         feed = self._col('thickener_feed')
         if feed is None:
             feed = self._col('gbt_feed')
+        feed_col = self.dp.get(feed_key, {}).get('column')
 
         if feed is not None and primary_uf is not None:
             throughput = feed.mean() * 1440 * 8.34 * (primary_uf.mean() / 100)
-            k['thickening_throughput'] = {'value': throughput, 'unit': 'lbs DS/day', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational (estimated)'}
+            k['thickening_throughput'] = {'value': throughput, 'unit': 'lbs DS/day', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational (estimated)',
+                                           'basis': f"Average **{feed_col}** (gpm) × 1440 min/day × 8.34 lbs/gal × (average **{uf_col}** ÷ 100)."}
             underflow_rate = throughput / 24
-            k['underflow_production_rate'] = {'value': underflow_rate, 'unit': 'lbs/hour', 'target': '200-1,000 lbs/hour', 'status': self._status_range(underflow_rate, 200, 1000)}
+            k['underflow_production_rate'] = {'value': underflow_rate, 'unit': 'lbs/hour', 'target': '200-1,000 lbs/hour', 'status': self._status_range(underflow_rate, 200, 1000),
+                                               'basis': "Thickening Throughput ÷ 24 hours."}
         else:
             k['thickening_throughput'] = self._insufficient(['Thickener/GBT feed flow (gpm) column together with underflow % column'])
             k['underflow_production_rate'] = self._insufficient(['Thickener/GBT feed flow (gpm) column together with underflow % column'])
@@ -828,55 +886,114 @@ class KPICalculator:
         area = self.plant_info.get('thickener_area')
         if area and feed is not None:
             hlr = feed.mean() * 1440 / area
-            k['hydraulic_loading_rate'] = {'value': hlr, 'unit': 'gpd/sq ft', 'target': '400-800 gpd/sq ft (gravity thickener typical)', 'status': self._status_range(hlr, 400, 800)}
+            k['hydraulic_loading_rate'] = {'value': hlr, 'unit': 'gpd/sq ft', 'target': '400-800 gpd/sq ft (gravity thickener typical)', 'status': self._status_range(hlr, 400, 800),
+                                            'basis': f"Average **{feed_col}** × 1440 min/day ÷ {area:g} sq ft (from Plant Information)."}
         else:
             k['hydraulic_loading_rate'] = self._insufficient(['Thickener surface area (Plant Information) plus feed flow (gpm) column'])
 
         if area and feed is not None and primary_uf is not None:
             throughput = feed.mean() * 1440 * 8.34 * (primary_uf.mean() / 100)
             loading = throughput / area
-            k['solids_loading_rate'] = {'value': loading, 'unit': 'lbs DS/day/sq ft', 'target': '0.5-2.0 lbs/day/sq ft', 'status': self._status_range(loading, 0.5, 2.0)}
+            k['solids_loading_rate'] = {'value': loading, 'unit': 'lbs DS/day/sq ft', 'target': '0.5-2.0 lbs/day/sq ft', 'status': self._status_range(loading, 0.5, 2.0),
+                                         'basis': f"Thickening Throughput ÷ {area:g} sq ft (from Plant Information)."}
         else:
             k['solids_loading_rate'] = self._insufficient(['Thickener surface area (enter in Plant Information) plus feed flow & underflow % data'])
 
         volume = self.plant_info.get('thickener_volume_gal')
         if volume and not is_gbt and feed is not None and feed.mean() > 0:
             rt_hours = volume / (feed.mean() * 60)
-            k['retention_time'] = {'value': rt_hours, 'unit': 'hours', 'target': '18-24+ hours (gravity thickener typical)', 'status': self._status_lower(rt_hours, 18)}
+            k['retention_time'] = {'value': rt_hours, 'unit': 'hours', 'target': '18-24+ hours (gravity thickener typical)', 'status': self._status_lower(rt_hours, 18),
+                                    'basis': f"{volume:g} gallons (Plant Information) ÷ (average **{feed_col}** gpm × 60)."}
+        elif is_gbt:
+            k['retention_time'] = self._insufficient(['Retention time is not meaningful for GBTs (continuous mechanical units, not tanks) - this is expected to be empty for your equipment'])
         else:
             k['retention_time'] = self._insufficient(['Thickener tank volume (gallons, enter in Plant Information) plus feed flow - only applicable to gravity thickeners, not GBT'])
 
+        # --- Thickening polymer: unit-aware, so we never silently apply a lbs/ton target to a raw total ---
+        poly_col = self.dp.get('gbt_polymer', {}).get('column')
+        poly_unit = self.dp.get('gbt_polymer', {}).get('unit')
         poly2 = self._col('gbt_polymer')
-        if poly2 is not None:
+
+        if poly2 is not None and poly_unit == 'lbs/ton':
             v = poly2.mean()
-            k['thickening_polymer_dose'] = {'value': v, 'unit': 'lbs/ton', 'target': '2-6 lbs active/ton DS (typical GBT/gravity)', 'status': self._status_range(v, 2, 6)}
+            k['thickening_polymer_dose'] = {'value': v, 'unit': 'lbs/ton', 'target': '2-6 lbs active/ton DS (typical GBT/gravity)', 'status': self._status_range(v, 2, 6),
+                                             'basis': f"Average of **{poly_col}**, confirmed as an already-normalized lbs/ton dose."}
+            k['thickening_polymer_total'] = self._insufficient(['Not needed - your polymer column is already a per-ton dose'])
+        elif poly2 is not None and dry is not None and dry.mean() > 0:
+            v = poly2.mean() / dry.mean()
+            k['thickening_polymer_dose'] = {'value': v, 'unit': 'lbs/ton (estimated)', 'target': '2-6 lbs active/ton DS (typical GBT/gravity)', 'status': self._status_range(v, 2, 6),
+                                             'basis': (f"**{poly_col}** is confirmed as '{poly_unit}', not a per-ton dose, so this is estimated as "
+                                                       f"average **{poly_col}** ÷ average **{dry_col or '(dry tons)'}**. "
+                                                       f"This assumes total plant dry tons is a reasonable proxy for GBT throughput - treat as approximate.")}
+            k['thickening_polymer_total'] = self._insufficient(['Not needed - an estimated per-ton dose was computed above'])
+        elif poly2 is not None:
+            k['thickening_polymer_dose'] = self._insufficient([
+                f"'{poly_col}' is confirmed as '{poly_unit}', not a per-ton dose, and there's no Dry Tons column available "
+                f"to normalize it - either map a true lbs/ton dose column, or confirm a Dry Tons column so this can be estimated."
+            ])
+            k['thickening_polymer_total'] = {'value': poly2.mean(), 'unit': poly_unit if poly_unit not in ('Unknown', None) else 'units/day',
+                                              'target': 'Not ratable without normalization', 'status': 'ℹ️ Informational — raw total, not per-ton',
+                                              'basis': f"Average of **{poly_col}** as-is (no throughput data available to normalize it)."}
         else:
             k['thickening_polymer_dose'] = self._insufficient(['Thickening polymer dose (lbs/ton) column'])
+            k['thickening_polymer_total'] = self._insufficient(['Thickening polymer usage column'])
+
+        cost_col2 = self.dp.get('gbt_polymer_cost', {}).get('column')
+        cost2 = self._col('gbt_polymer_cost')
+        if cost2 is not None and poly2 is not None and poly2.mean() > 0:
+            unit_cost = cost2.mean() / poly2.mean()
+            k['thickening_polymer_unit_cost'] = {'value': unit_cost, 'unit': f'$/{poly_unit if poly_unit not in ("Unknown", None) else "lb"}', 'target': 'Compare to your contract price', 'status': 'ℹ️ Informational',
+                                                  'basis': f"Average **{cost_col2}** ÷ average **{poly_col}**."}
+        else:
+            k['thickening_polymer_unit_cost'] = self._insufficient(['Thickening polymer cost ($) column together with polymer mass/volume column'])
 
         k['daf_air_to_solids_ratio'] = self._insufficient([
-            'DAF air-to-solids ratio requires calibrated air mass flow and solids mass flow instrumentation '
-            '(saturator pressure/flow, recycle ratio) that most operational spreadsheets don\'t log - pull this '
-            'from your DAF control panel if you need it, rather than estimating it here.'
+            "DAF air-to-solids ratio requires calibrated air mass flow and solids mass flow instrumentation "
+            "(saturator pressure/flow, recycle ratio) that most operational spreadsheets don't log - pull this "
+            "from your DAF control panel if you need it, rather than estimating it here."
         ])
 
+        torque_col = self.dp.get('thickener_torque', {}).get('column')
         torque = self._col('thickener_torque')
         if torque is not None:
-            k['rake_torque_monitor'] = {'value': torque.mean(), 'unit': 'Nm', 'target': 'Compare to manufacturer-rated torque limit', 'status': 'ℹ️ Informational — rising trend may indicate rag/solids buildup'}
+            k['rake_torque_monitor'] = {'value': torque.mean(), 'unit': 'Nm', 'target': 'Compare to manufacturer-rated torque limit', 'status': 'ℹ️ Informational — rising trend may indicate rag/solids buildup',
+                                         'basis': f"Average of **{torque_col}**."}
         else:
             k['rake_torque_monitor'] = self._insufficient(['Thickener rake torque (Nm) column'])
 
+        speed_col = self.dp.get('gbt_belt_speed', {}).get('column')
+        speed_unit = self.dp.get('gbt_belt_speed', {}).get('unit')
         speed = self._col('gbt_belt_speed')
         if speed is not None:
-            k['belt_speed_monitor'] = {'value': speed.mean(), 'unit': speed_unit if (speed_unit := self.dp.get('gbt_belt_speed', {}).get('unit')) not in ('Unknown', None) else '', 'target': 'Track trend vs. underflow/overflow quality', 'status': 'ℹ️ Informational'}
+            k['belt_speed_monitor'] = {'value': speed.mean(), 'unit': speed_unit if speed_unit not in ('Unknown', None) else '', 'target': 'Track trend vs. underflow/overflow quality', 'status': 'ℹ️ Informational',
+                                        'basis': f"Average of **{speed_col}**."}
         else:
             k['belt_speed_monitor'] = self._insufficient(['GBT belt speed column'])
 
-        th_hrs = self._col('thickening_run_hours')
-        if th_hrs is not None:
-            v = (th_hrs / 24 * 100).clip(upper=100).mean()
-            k['thickening_equipment_availability'] = {'value': v, 'unit': '%', 'target': '>92%', 'status': self._status_lower(v, 92)}
+        # --- Equipment availability: prefer individual unit runtime columns over a combined "total" column,
+        # since a summed total across multiple parallel units can't just be divided by 24. ---
+        unit_hrs_keys = ['gbt_1_hours', 'gbt_2_hours', 'gbt_3_hours']
+        vals, used_cols = [], []
+        for hkey in unit_hrs_keys:
+            d = self._col(hkey)
+            if d is not None:
+                vals.append((d / 24 * 100).clip(upper=100).mean())
+                used_cols.append(self.dp[hkey]['column'])
+        if vals:
+            v = float(np.mean(vals))
+            k['thickening_equipment_availability'] = {'value': v, 'unit': '%', 'target': '>92%', 'status': self._status_lower(v, 92),
+                                                        'basis': f"Average of (Run Hours ÷ 24 × 100) across individual unit columns: {', '.join(f'**{c}**' for c in used_cols)}."}
         else:
-            k['thickening_equipment_availability'] = self._insufficient(['Thickening equipment run-hours column'])
+            th_hrs_col = self.dp.get('thickening_run_hours', {}).get('column')
+            th_hrs = self._col('thickening_run_hours')
+            if th_hrs is not None:
+                v = (th_hrs / 24 * 100).clip(upper=100).mean()
+                k['thickening_equipment_availability'] = {'value': v, 'unit': '%', 'target': '>92%', 'status': self._status_lower(v, 92),
+                                                            'basis': (f"Average of (**{th_hrs_col}** ÷ 24 × 100). Note: if this column sums runtime across "
+                                                                      f"multiple GBT units, this estimate will be inflated - map individual unit runtime "
+                                                                      f"columns (GBT 1/2/3 Hours) instead for an accurate reading.")}
+            else:
+                k['thickening_equipment_availability'] = self._insufficient(['Thickening equipment run-hours column(s), ideally per individual unit'])
 
         return k
 
@@ -944,6 +1061,7 @@ class PerformanceAnalyzer:
                 'additional_data_needed': template.get('additional_data', ['Continue routine monitoring']),
                 'timeline': template.get('timeline', '2-4 weeks'),
                 'risk': template.get('risk', 'Low - monitor closely'),
+                'basis': val.get('basis', 'Calculation basis unavailable for this metric.'),
             })
 
         if not recs:
@@ -955,6 +1073,7 @@ class PerformanceAnalyzer:
                 'potential_savings': 'Maintain current efficiency',
                 'savings_explanation': 'Plant is performing well across all KPIs that could be computed from your data.',
                 'additional_data_needed': ['Continue routine monitoring'], 'timeline': 'Ongoing', 'risk': 'Low',
+                'basis': 'N/A - no metric was flagged.',
             })
 
         return recs, good_items
@@ -1219,6 +1338,9 @@ else:
                 with st.expander("📊 Savings Explanation"):
                     st.write(rec['savings_explanation'])
 
+                with st.expander("🧮 How This Was Calculated", expanded=False):
+                    st.write(f"**Indicators/columns used:** {rec['basis']}")
+
                 with st.expander("📋 Additional Data That Would Improve This Analysis"):
                     for item in rec['additional_data_needed']:
                         st.write(f"• {item}")
@@ -1229,6 +1351,8 @@ else:
             with st.expander(f"✅ Performing Well ({len(good_items)} metric(s) at or near target)"):
                 for key, name, val in good_items:
                     st.write(f"**{name}:** {val['value']:.2f} {val['unit']} — {val.get('status', '')}")
+                    if val.get('basis'):
+                        st.caption(val['basis'])
 
     # ============================================================
     # TAB 3: TREND / BENCHMARK ANALYSIS
