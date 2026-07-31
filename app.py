@@ -696,12 +696,20 @@ class KPICalculator:
         poly_raw_col = self.dp.get('polymer_raw', {}).get('column')
         poly_active = self._col('polymer')
         poly_raw = self._col('polymer_raw')
+        activity_input = self.plant_info.get('dewatering_polymer_activity_pct')
+
         if poly_active is not None:
             v = poly_active.mean()
             k['active_polymer_dose'] = {'value': v, 'unit': 'lbs/ton', 'target': '5-15 lbs active/ton DS', 'status': self._status_range(v, 5, 15),
                                          'basis': f"Average of **{poly_col}**, confirmed as an active-basis lbs/ton dose."}
+        elif poly_raw is not None and activity_input:
+            v = poly_raw.mean() * (activity_input / 100)
+            k['active_polymer_dose'] = {'value': v, 'unit': 'lbs/ton (estimated)', 'target': '5-15 lbs active/ton DS', 'status': self._status_range(v, 5, 15),
+                                         'basis': (f"Average **{poly_raw_col}** × {activity_input:g}% product activity (entered in Plant Information) — "
+                                                   f"estimated, not directly measured.")}
         else:
-            k['active_polymer_dose'] = self._insufficient(['Active polymer dose (lbs active/ton DS) column'])
+            k['active_polymer_dose'] = self._insufficient(['Active polymer dose (lbs active/ton DS) column, or a raw/neat polymer column plus '
+                                                             'the product\'s % activity entered in Plant Information'])
 
         if poly_raw is not None:
             v = poly_raw.mean()
@@ -714,8 +722,11 @@ class KPICalculator:
             activity = (poly_active.mean() / poly_raw.mean()) * 100
             k['polymer_activity_pct'] = {'value': activity, 'unit': '%', 'target': 'Compare to product spec sheet', 'status': 'ℹ️ Informational',
                                           'basis': f"Average **{poly_col}** ÷ average **{poly_raw_col}** × 100."}
+        elif activity_input:
+            k['polymer_activity_pct'] = {'value': activity_input, 'unit': '%', 'target': 'As entered in Plant Information', 'status': 'ℹ️ Informational',
+                                          'basis': "Value entered directly in Plant Information (no active-basis column to cross-check it against)."}
         else:
-            k['polymer_activity_pct'] = self._insufficient(['Both active and raw/neat polymer dose columns (to compute % activity)'])
+            k['polymer_activity_pct'] = self._insufficient(['Both active and raw/neat polymer dose columns (to compute % activity), or enter it directly in Plant Information'])
 
         cost_col = self.dp.get('polymer_cost', {}).get('column')
         if cost_col and dry_col:
@@ -913,6 +924,7 @@ class KPICalculator:
         poly_col = self.dp.get('gbt_polymer', {}).get('column')
         poly_unit = self.dp.get('gbt_polymer', {}).get('unit')
         poly2 = self._col('gbt_polymer')
+        th_activity_input = self.plant_info.get('thickening_polymer_activity_pct')
 
         if poly2 is not None and poly_unit == 'lbs/ton':
             v = poly2.mean()
@@ -920,10 +932,13 @@ class KPICalculator:
                                              'basis': f"Average of **{poly_col}**, confirmed as an already-normalized lbs/ton dose."}
             k['thickening_polymer_total'] = self._insufficient(['Not needed - your polymer column is already a per-ton dose'])
         elif poly2 is not None and dry is not None and dry.mean() > 0:
-            v = poly2.mean() / dry.mean()
+            activity_factor = (th_activity_input / 100) if th_activity_input else 1.0
+            v = (poly2.mean() * activity_factor) / dry.mean()
+            activity_note = (f" and adjusted for {th_activity_input:g}% product activity (Plant Information)" if th_activity_input
+                              else " — enter your product's % activity in Plant Information to refine this to an active basis")
             k['thickening_polymer_dose'] = {'value': v, 'unit': 'lbs/ton (estimated)', 'target': '2-6 lbs active/ton DS (typical GBT/gravity)', 'status': self._status_range(v, 2, 6),
                                              'basis': (f"**{poly_col}** is confirmed as '{poly_unit}', not a per-ton dose, so this is estimated as "
-                                                       f"average **{poly_col}** ÷ average **{dry_col or '(dry tons)'}**. "
+                                                       f"average **{poly_col}** ÷ average **{dry_col or '(dry tons)'}**{activity_note}. "
                                                        f"This assumes total plant dry tons is a reasonable proxy for GBT throughput - treat as approximate.")}
             k['thickening_polymer_total'] = self._insufficient(['Not needed - an estimated per-ton dose was computed above'])
         elif poly2 is not None:
@@ -1215,11 +1230,24 @@ else:
             value=0.0, min_value=0.0,
         )
 
+        st.write("**Polymer Product Activity (optional)**")
+        st.caption("If you only have a raw/neat/product-basis polymer column (not a true lbs-active/ton dose), "
+                   "enter your product's % activity from its spec sheet here and the app will estimate the "
+                   "active-basis dose for you, clearly labeled as an estimate.")
+        dewatering_polymer_activity_input = st.number_input(
+            "Dewatering Polymer Activity (%) - optional", value=0.0, min_value=0.0, max_value=100.0,
+        )
+        thickening_polymer_activity_input = st.number_input(
+            "Thickening Polymer Activity (%) - optional", value=0.0, min_value=0.0, max_value=100.0,
+        )
+
         plant_info = {
             'name': plant_name, 'location': plant_location,
             'dewatering_equipment': dewatering_equipment, 'thickening_equipment': thickening_equipment,
             'capacity': plant_capacity, 'thickener_area': thickener_area_input if thickener_area_input > 0 else None,
             'thickener_volume_gal': thickener_volume_input if thickener_volume_input > 0 else None,
+            'dewatering_polymer_activity_pct': dewatering_polymer_activity_input if dewatering_polymer_activity_input > 0 else None,
+            'thickening_polymer_activity_pct': thickening_polymer_activity_input if thickening_polymer_activity_input > 0 else None,
         }
 
     # ------------------------------------------------------
@@ -1478,13 +1506,41 @@ else:
                                 label_a = f"Period A: {a_start.strftime('%b %d, %Y')} - {a_end.strftime('%b %d, %Y')}"
                                 label_b = f"Period B: {b_start.strftime('%b %d, %Y')} - {b_end.strftime('%b %d, %Y')}"
 
+                                date_fmt = '%b %d, %Y' if aggregation in ('Daily', 'Weekly') else '%b %Y'
+                                offset_a = list(range(len(agg_a)))
+                                offset_b = list(range(len(agg_b)))
+                                dates_a_text = [d.strftime(date_fmt) for d in agg_a.index]
+                                dates_b_text = [d.strftime(date_fmt) for d in agg_b.index]
+
+                                # Thin the tick labels so long daily/weekly series don't get congested -
+                                # aim for roughly 10-12 visible labels regardless of series length.
+                                n = len(offset_a)
+                                step = max(1, int(np.ceil(n / 12))) if n else 1
+                                tick_idx = list(range(0, n, step))
+                                if n and tick_idx[-1] != n - 1:
+                                    tick_idx.append(n - 1)
+                                tickvals = [offset_a[i] for i in tick_idx]
+                                ticktext = [dates_a_text[i] for i in tick_idx]
+
                                 fig = go.Figure()
-                                fig.add_trace(go.Scatter(x=list(range(len(agg_a))), y=agg_a.values, mode='lines+markers', name=label_a, line=dict(color='#1f77b4', width=3)))
-                                fig.add_trace(go.Scatter(x=list(range(len(agg_b))), y=agg_b.values, mode='lines+markers', name=label_b, line=dict(color='#ff7f0e', width=3)))
+                                fig.add_trace(go.Scatter(
+                                    x=offset_a, y=agg_a.values, mode='lines+markers', name=label_a,
+                                    line=dict(color='#1f77b4', width=3), customdata=dates_a_text,
+                                    hovertemplate=f"{label_a}<br>%{{customdata}}: %{{y:.2f}}<extra></extra>",
+                                ))
+                                fig.add_trace(go.Scatter(
+                                    x=offset_b, y=agg_b.values, mode='lines+markers', name=label_b,
+                                    line=dict(color='#ff7f0e', width=3), customdata=dates_b_text,
+                                    hovertemplate=f"{label_b}<br>%{{customdata}}: %{{y:.2f}}<extra></extra>",
+                                ))
                                 fig.update_layout(
                                     title=f"Benchmark Comparison: {selected_column} ({aggregation}, {agg_method})",
-                                    xaxis_title=f"{aggregation} Period Offset (0 = start of each period)",
-                                    yaxis_title=numeric_cols[selected_column], height=500, hovermode='x unified',
+                                    xaxis=dict(
+                                        title="Date (Period A dates shown; Period B is aligned to the same relative position - hover for its actual date)",
+                                        tickmode='array', tickvals=tickvals, ticktext=ticktext, tickangle=-30,
+                                    ),
+                                    yaxis_title=numeric_cols[selected_column], height=520, hovermode='closest',
+                                    margin=dict(b=110),
                                 )
                                 st.plotly_chart(fig, use_container_width=True)
 
