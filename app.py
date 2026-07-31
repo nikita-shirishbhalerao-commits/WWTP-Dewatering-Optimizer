@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from fuzzywuzzy import fuzz
-from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -23,11 +22,10 @@ st.set_page_config(
 )
 
 st.title("🌊 AI-Powered WWTP Dewatering & Thickening Performance Analyzer")
-st.markdown("**Fuzzy Parameter Detection | Benchmark/YOY Analysis | AI Recommendations | Unit Tracking**")
+st.markdown("**Fuzzy Parameter Detection | Confirm-Before-You-Analyze | Period A/B Benchmark | AI Recommendations**")
 
 # ============================================================
 # PERFORMANCE THRESHOLDS (used for chart footnotes + ratings)
-# These map to the charted metrics in the Dewatering / Thickening tabs
 # ============================================================
 PERFORMANCE_THRESHOLDS = {
     'polymer': {'excellent': (0, 12), 'good': (12, 15), 'moderate': (15, 18), 'poor': (18, float('inf'))},
@@ -41,7 +39,6 @@ PERFORMANCE_THRESHOLDS = {
 
 
 def format_threshold_footnote(metric_key, unit=""):
-    """Build a human-readable Excellent/Good/Moderate/Poor legend for a chart footnote."""
     if metric_key not in PERFORMANCE_THRESHOLDS:
         return None
     thresholds = PERFORMANCE_THRESHOLDS[metric_key]
@@ -69,13 +66,13 @@ def render_footnote(metric_key, unit="", fallback=None):
 
 
 # ============================================================
-# KPI DEFINITIONS (used to render the Dashboard + drive Recommendations)
+# KPI DEFINITIONS
 # ============================================================
 DEWATERING_KPI_DEFINITIONS = {
     'cake_solids': {'name': 'Cake Solids Content (%)', 'description': 'Dry solids percentage in dewatered biosolids. Target varies by equipment: 18-25% belt press, 20-30% centrifuge.'},
     'polymer_consumption': {'name': 'Polymer Consumption (lbs/ton DS)', 'description': 'Conditioning chemical usage per ton of dry solids processed.'},
     'dewatering_throughput': {'name': 'Dewatering Throughput (lbs DS/day)', 'description': 'Daily dry solids processing capacity.'},
-    'filtrate_turbidity': {'name': 'Filtrate Turbidity (NTU)', 'description': 'Clarity of return liquor/centrate. Lower = better solids capture.'},
+    'filtrate_turbidity': {'name': 'Filtrate Clarity', 'description': 'Clarity of return liquor/centrate. Lower = better solids capture. Rating only applied if a recognizable NTU or mg/L unit was detected.'},
     'solids_recovery': {'name': 'Solids Recovery Rate (%)', 'description': 'Percentage of incoming solids captured in cake vs. lost to recycle stream.'},
     'cake_production_rate': {'name': 'Cake Production Rate (lbs/hour)', 'description': 'Dewatered biosolids output rate.'},
     'filtrate_flow_rate': {'name': 'Filtrate Flow Rate (gpm)', 'description': 'Return liquor flow rate from dewatering.'},
@@ -87,7 +84,7 @@ DEWATERING_KPI_DEFINITIONS = {
 THICKENING_KPI_DEFINITIONS = {
     'thickened_solids': {'name': 'Thickened Solids Concentration (%)', 'description': 'Dry solids percentage achieved. Target 4-8% gravity, 6-12% DAF.'},
     'underflow_lbs_gal': {'name': 'Underflow Solids Concentration (lbs DS/gal)', 'description': 'Underflow solids expressed as mass per gallon; higher = less downstream load.'},
-    'overflow_turbidity': {'name': 'Overflow Turbidity/TSS', 'description': 'Clarified supernatant quality. Lower = better solids separation.'},
+    'overflow_turbidity': {'name': 'Overflow Clarity', 'description': 'Clarified supernatant quality. Lower = better solids separation. Rating only applied if a recognizable NTU or mg/L unit was detected.'},
     'thickening_throughput': {'name': 'Thickening Throughput (lbs DS/day)', 'description': 'Estimated daily solids processing capacity.'},
     'solids_capture_efficiency': {'name': 'Solids Capture Efficiency (%)', 'description': 'Percentage of incoming solids retained in thickened sludge.'},
     'underflow_production_rate': {'name': 'Underflow Production Rate (lbs/hour)', 'description': 'Thickened sludge output rate.'},
@@ -116,9 +113,9 @@ RECOMMENDATION_TEMPLATES = {
         'timeline': '1-2 weeks', 'risk': 'Medium - monitor cake quality while adjusting',
     },
     'filtrate_turbidity': {
-        'issue': 'Filtrate/centrate turbidity is elevated, indicating solids are escaping to the recycle stream.',
+        'issue': 'Filtrate/centrate clarity is elevated, indicating solids are escaping to the recycle stream.',
         'root_causes': ['Polymer underdosed', 'Feed rate too high for equipment', 'Screen/bowl wear allowing solids bypass', 'Polymer not fully mixed before dewatering'],
-        'actions': ['Increase polymer dose incrementally and monitor turbidity response', 'Check polymer mixing/injection point', 'Inspect screens, bowl, or belt for wear', 'Reduce feed rate if turbidity persists'],
+        'actions': ['Increase polymer dose incrementally and monitor clarity response', 'Check polymer mixing/injection point', 'Inspect screens, bowl, or belt for wear', 'Reduce feed rate if turbidity persists'],
         'additional_data': ['Polymer mixing energy/injection point details', 'Screen/bowl inspection records'],
         'timeline': '1-2 weeks', 'risk': 'Low',
     },
@@ -210,6 +207,53 @@ PRIORITY_MAP = {
 }
 
 # ============================================================
+# PARAMETER KEYWORDS (module-level, shared by every file loaded)
+# ============================================================
+PARAMETER_KEYWORDS = {
+    'polymer': ['act poly dry ton', 'lbs act poly dry ton', 'active polymer dry ton', 'polymer dose lbs ton',
+                'active poly lbs per dt', 'centrifuge act poly dry ton', 'active polymer', 'polymer dose', 'poly dose lbs/ton'],
+    'cake_quality': ['cake solids', 'cake percent', 'cake quality', 'percent solids cake', 'dewatered solids', 'cake ts', 'cake dry solids', 'cake avg'],
+    'centrifuge_1_hours': ['centrifuge 1 hours', 'c1 run hours', 'centrifuge 1 runtime'],
+    'centrifuge_2_hours': ['centrifuge 2 hours', 'c2 run hours', 'centrifuge 2 runtime'],
+    'centrifuge_3_hours': ['centrifuge 3 hours', 'c3 run hours', 'centrifuge 3 runtime'],
+    'bfp_hours': ['bfp hours', 'belt filter press hours', 'belt press run hours'],
+    'rotary_press_hours': ['rotary press hours', 'rotary press runtime'],
+    'dry_tons': ['dry tons', 'dry ton', 'dry solids tons', 'dry solids produced', 'tons dry solids'],
+    'wet_tons': ['wet tons', 'wet ton', 'wet cake tons', 'cake wet tons'],
+    'trucks': ['sludge trucks', 'daily trucks', 'truck count', 'number of trucks', 'haul trucks'],
+    'influent_flow': ['influent flow', 'plant influent', 'inflow mgd', 'influent mgd'],
+    'effluent_flow': ['effluent flow', 'plant effluent', 'outflow mgd', 'effluent mgd'],
+    'filtrate_turbidity': ['filtrate turbidity ntu', 'centrate turbidity ntu', 'filtrate ntu', 'centrate ntu'],
+    'filtrate_flow': ['filtrate flow gpm', 'centrate flow gpm', 'filtrate gpm', 'centrate gpm', 'return flow dewatering'],
+    'feed_solids': ['feed solids percent', 'influent solids concentration', 'feed ts percent', 'raw sludge solids percent'],
+    'thickener_feed': ['thickener feed gpm', 'gravity thickener feed', 'thickener inlet flow', 'feed rate gpm'],
+    'thickener_underflow': ['thickener underflow percent', 'gravity thickener underflow', 'underflow ts', 'underflow solids', 'thickener underflow solids'],
+    'thickener_overflow': ['thickener overflow tss', 'gravity thickener overflow', 'overflow tss', 'overflow turbidity ntu', 'thickener overflow tss'],
+    'thickener_torque': ['thickener torque', 'rake torque', 'thickener rake torque'],
+    'gbt_feed': ['gbt feed gpm', 'gravity belt thickener feed', 'belt thickener feed rate'],
+    'gbt_underflow': ['gbt underflow percent', 'gravity belt thickener underflow', 'belt thickener underflow solids'],
+    'gbt_overflow': ['gbt overflow tss', 'gravity belt thickener overflow', 'belt thickener overflow tss'],
+    'gbt_belt_speed': ['gbt belt speed', 'gravity belt speed', 'belt thickener speed'],
+    'gbt_polymer': ['gbt polymer dose', 'gravity belt polymer dose', 'belt thickener polymer', 'daf polymer', 'thickening polymer'],
+    'bowl_speed': ['bowl speed rpm', 'centrifuge bowl speed', 'centrifuge rpm'],
+    'polymer_cost': ['polymer cost dollars', 'polymer price', 'polymer dollar cost', 'chemical cost polymer'],
+    'hauling_cost': ['hauling cost dollars', 'truck hauling cost', 'disposal hauling cost'],
+    'dewatering_run_hours': ['dewatering run hours', 'dewatering equipment hours', 'dewatering uptime hours'],
+    'thickening_run_hours': ['thickening run hours', 'thickener uptime hours', 'gbt run hours'],
+}
+
+
+def categorize_param(key):
+    if key.startswith('gbt') or key.startswith('thickener') or key == 'thickening_run_hours':
+        return 'Thickening'
+    if key in ('influent_flow', 'effluent_flow'):
+        return 'Flow'
+    if key in ('polymer_cost', 'hauling_cost'):
+        return 'Cost'
+    return 'Dewatering'
+
+
+# ============================================================
 # FUZZY PARAMETER DETECTOR
 # ============================================================
 class FuzzyParameterDetector:
@@ -254,14 +298,14 @@ class FuzzyParameterDetector:
     @staticmethod
     def _detect_unit(column_name):
         col_lower = column_name.lower()
-        if any(x in col_lower for x in ['lbs/ton', 'lbs per ton', 'lb/ton', 'polymer', 'poly']):
-            if 'gal' in col_lower or 'gpd' in col_lower:
-                return 'GPD'
+        if any(x in col_lower for x in ['ntu']):
+            return 'NTU'
+        if any(x in col_lower for x in ['lbs/ton', 'lbs per ton', 'lb/ton']) or ('poly' in col_lower and 'ton' in col_lower):
             return 'lbs/ton'
+        if 'gpd' in col_lower and 'poly' in col_lower:
+            return 'GPD'
         if any(x in col_lower for x in ['%', 'percent', 'solids', 'cake', 'ts', 'tss', 'moisture']):
             return '%'
-        if any(x in col_lower for x in ['ntu', 'turbidity']):
-            return 'NTU'
         if any(x in col_lower for x in ['flow', 'gpm', 'mgd', 'gpd', 'rate']):
             if 'mgd' in col_lower:
                 return 'MGD'
@@ -291,6 +335,76 @@ class FuzzyParameterDetector:
         if any(x in col_lower for x in ['pressure', 'psi', 'bar']):
             return 'PSI'
         return 'Unknown'
+
+
+# ============================================================
+# SHARED LOAD / DETECT / MAPPING-EDITOR HELPERS
+# ============================================================
+def load_wwtp_csv(uploaded_file):
+    """Read a CSV, detect/parse a date column (or synthesize one), return (df, date_col)."""
+    df = pd.read_csv(uploaded_file)
+    df = df.reset_index(drop=True)
+    date_col = None
+    for col in df.columns:
+        if any(x in col.lower() for x in ['date', 'time', 'day', 'month', 'year']):
+            try:
+                converted = pd.to_datetime(df[col], errors='coerce')
+                if converted.notna().sum() > len(df) * 0.5:
+                    df[col] = converted
+                    date_col = col
+                    df = df.sort_values(col).reset_index(drop=True)
+                    break
+            except Exception:
+                pass
+    if not date_col:
+        df['Date'] = pd.date_range(start='2023-01-01', periods=len(df), freq='D')
+        date_col = 'Date'
+    return df, date_col
+
+
+def detect_parameters(df, threshold=55):
+    detector = FuzzyParameterDetector(df.columns)
+    return detector.find_parameters(PARAMETER_KEYWORDS, threshold=threshold)
+
+
+def render_mapping_editor(detected_params, df_columns, key_prefix):
+    """Interactive, editable table so the user can confirm or correct every fuzzy-matched column
+    before it's used anywhere else in the app."""
+    all_columns = ["— None detected —"] + list(df_columns)
+    rows = []
+    for key, info in sorted(detected_params.items(), key=lambda kv: (categorize_param(kv[0]), kv[0])):
+        rows.append({
+            'Category': categorize_param(key),
+            'Parameter': key,
+            'Column Used': info['column'] if info['column'] else "— None detected —",
+            'Match %': int(info['score']),
+            'Unit': info['unit'],
+        })
+    mapping_df = pd.DataFrame(rows)
+
+    edited = st.data_editor(
+        mapping_df,
+        column_config={
+            'Category': st.column_config.TextColumn(disabled=True),
+            'Parameter': st.column_config.TextColumn(disabled=True),
+            'Column Used': st.column_config.SelectboxColumn(options=all_columns, required=True, width="large"),
+            'Match %': st.column_config.NumberColumn(disabled=True, format="%d%%"),
+            'Unit': st.column_config.TextColumn(disabled=True),
+        },
+        hide_index=True,
+        use_container_width=True,
+        key=f"{key_prefix}_mapping_editor",
+    )
+
+    updated = {}
+    for _, row in edited.iterrows():
+        key = row['Parameter']
+        col = row['Column Used']
+        if col == "— None detected —" or pd.isna(col):
+            updated[key] = {'column': None, 'score': 0, 'unit': 'Unknown'}
+        else:
+            updated[key] = {'column': col, 'score': row['Match %'], 'unit': FuzzyParameterDetector._detect_unit(col)}
+    return updated
 
 
 # ============================================================
@@ -377,7 +491,7 @@ class CorrelationAnalyzer:
             colorscale='RdBu', zmid=0, text=np.round(corr_matrix.values, 2),
             texttemplate='%{text:.2f}', textfont={"size": 10}, colorbar=dict(title="Correlation"),
         ))
-        fig.update_layout(title="Correlation Matrix - All Detected Parameters", height=600, xaxis_title="Parameters", yaxis_title="Parameters")
+        fig.update_layout(title="Correlation Matrix - Confirmed Parameters", height=600, xaxis_title="Parameters", yaxis_title="Parameters")
         return fig
 
     def create_scatter_plot(self, var1_col, var2_col):
@@ -400,7 +514,7 @@ class CorrelationAnalyzer:
 # KPI CALCULATOR
 # ============================================================
 class KPICalculator:
-    """Computes meaningful KPIs from whatever parameters were detected in the data."""
+    """Computes meaningful KPIs strictly from the columns the user has confirmed."""
 
     def __init__(self, df, detected_params, plant_info=None):
         self.df = df
@@ -435,6 +549,24 @@ class KPICalculator:
     @staticmethod
     def _insufficient(needed):
         return {'insufficient': True, 'needed': needed}
+
+    @staticmethod
+    def _clarity_kpi(value, unit, ntu_target, mgl_target):
+        """Only apply a numeric pass/fail rating if we actually recognize the unit.
+        Otherwise report the value honestly as informational so we never invent a benchmark."""
+        if unit == 'NTU':
+            status = KPICalculator._status_upper(value, ntu_target)
+            target = f'<{ntu_target} NTU'
+            display_unit = 'NTU'
+        elif unit == 'mg/L':
+            status = KPICalculator._status_upper(value, mgl_target)
+            target = f'<{mgl_target} mg/L'
+            display_unit = 'mg/L'
+        else:
+            status = 'ℹ️ Informational — unit not confirmed as NTU/mg/L, no benchmark applied'
+            target = 'Lower is generally better'
+            display_unit = unit if unit not in ('Unknown', None) else 'units'
+        return {'value': value, 'unit': display_unit, 'target': target, 'status': status}
 
     def calculate_dewatering_kpis(self):
         k = {}
@@ -477,10 +609,10 @@ class KPICalculator:
 
         filt_turb = self._col('filtrate_turbidity')
         if filt_turb is not None:
-            v = filt_turb.mean()
-            k['filtrate_turbidity'] = {'value': v, 'unit': 'NTU', 'target': '<10 NTU', 'status': self._status_upper(v, 10)}
+            unit = self.dp['filtrate_turbidity']['unit']
+            k['filtrate_turbidity'] = self._clarity_kpi(filt_turb.mean(), unit, ntu_target=10, mgl_target=500)
         else:
-            k['filtrate_turbidity'] = self._insufficient(['Filtrate/centrate turbidity (NTU) column'])
+            k['filtrate_turbidity'] = self._insufficient(['Filtrate/centrate turbidity column - none of your columns matched this'])
 
         feed_solids = self._col('feed_solids')
         if dry is not None and feed_solids is not None and feed_solids.mean() > 0:
@@ -543,13 +675,15 @@ class KPICalculator:
             k['underflow_lbs_gal'] = self._insufficient(['Thickener/GBT underflow solids (%) column'])
 
         of = self._col('thickener_overflow')
-        gbt_of = self._col('gbt_overflow')
-        primary_of = of if of is not None else gbt_of
-        if primary_of is not None:
-            v = primary_of.mean()
-            k['overflow_turbidity'] = {'value': v, 'unit': 'mg/L TSS', 'target': '<500 mg/L TSS', 'status': self._status_upper(v, 500)}
+        of_key = 'thickener_overflow'
+        if of is None:
+            of = self._col('gbt_overflow')
+            of_key = 'gbt_overflow'
+        if of is not None:
+            unit = self.dp[of_key]['unit']
+            k['overflow_turbidity'] = self._clarity_kpi(of.mean(), unit, ntu_target=5, mgl_target=500)
         else:
-            k['overflow_turbidity'] = self._insufficient(['Thickener/GBT overflow TSS or turbidity column'])
+            k['overflow_turbidity'] = self._insufficient(['Thickener/GBT overflow TSS or turbidity column - none of your columns matched this'])
 
         feed = self._col('thickener_feed')
         if feed is None:
@@ -760,10 +894,10 @@ if uploaded_file is None:
     **Flow:** Influent Flow (MGD), Effluent Flow (MGD)
 
     ### ✨ Features
-    - 🔍 Fuzzy Logic auto-detects your columns
-    - 📊 AI-derived KPI dashboard (only shows what can be computed from your data)
+    - 🔍 Fuzzy Logic auto-detects your columns — **and you confirm/correct the mapping before anything is calculated**
+    - 📊 AI-derived KPI dashboard (only shows what can be computed from your data, no assumed units)
     - 💡 AI recommendations with root causes, actions, and savings estimates
-    - 📈 Trend, custom-period, and side-by-side benchmark comparison
+    - 📈 Trend, custom-period, and true **Period A vs Period B** (two-file) benchmark comparison
     - 🔗 Correlation analysis between parameters
     - 🔎 Data quality / outlier detection
 
@@ -771,29 +905,9 @@ if uploaded_file is None:
     """)
 else:
     try:
-        df = pd.read_csv(uploaded_file)
-        df = df.reset_index(drop=True)
-
-        date_col = None
-        for col in df.columns:
-            if any(x in col.lower() for x in ['date', 'time', 'day', 'month', 'year']):
-                try:
-                    converted = pd.to_datetime(df[col], errors='coerce')
-                    if converted.notna().sum() > len(df) * 0.5:
-                        df[col] = converted
-                        date_col = col
-                        df = df.sort_values(col).reset_index(drop=True)
-                        break
-                except Exception:
-                    pass
-
-        if not date_col:
-            df['Date'] = pd.date_range(start='2023-01-01', periods=len(df), freq='D')
-            date_col = 'Date'
-
+        df, date_col = load_wwtp_csv(uploaded_file)
         st.sidebar.success(f"✅ Loaded {len(df)} records")
         st.sidebar.write(f"📅 {df[date_col].min().date()} to {df[date_col].max().date()}")
-
     except Exception as e:
         st.error(f"Error loading file: {e}")
         st.stop()
@@ -830,50 +944,28 @@ else:
         }
 
     # ------------------------------------------------------
-    # PARAMETER DETECTION
+    # PARAMETER DETECTION + CONFIRM/EDIT MAPPING
     # ------------------------------------------------------
-    parameter_keywords = {
-        'polymer': ['active polymer', 'polymer dose', 'poly dose', 'lbs per ton', 'lbs/ton', 'polymer lbs', 'poly lbs', 'polymer consumption', 'dewatering polymer'],
-        'cake_quality': ['cake solids', 'cake percent', 'cake quality', 'percent solids cake', 'dewatered solids', 'cake ts', 'cake dry solids', 'cake avg'],
-        'centrifuge_1_hours': ['centrifuge 1 hours', 'c1 run hours', 'centrifuge 1 runtime'],
-        'centrifuge_2_hours': ['centrifuge 2 hours', 'c2 run hours', 'centrifuge 2 runtime'],
-        'centrifuge_3_hours': ['centrifuge 3 hours', 'c3 run hours', 'centrifuge 3 runtime'],
-        'bfp_hours': ['bfp hours', 'belt filter press hours', 'belt press run hours'],
-        'rotary_press_hours': ['rotary press hours', 'rotary press runtime'],
-        'dry_tons': ['dry tons', 'dry ton', 'dry solids tons', 'dry solids produced', 'tons dry solids'],
-        'wet_tons': ['wet tons', 'wet ton', 'wet cake tons', 'cake wet tons'],
-        'trucks': ['sludge trucks', 'daily trucks', 'truck count', 'number of trucks', 'haul trucks'],
-        'influent_flow': ['influent flow', 'plant influent', 'inflow mgd', 'influent mgd'],
-        'effluent_flow': ['effluent flow', 'plant effluent', 'outflow mgd', 'effluent mgd'],
-        'filtrate_turbidity': ['filtrate turbidity', 'centrate turbidity', 'filtrate ntu', 'centrate ntu', 'dewatering filtrate quality'],
-        'filtrate_flow': ['filtrate flow', 'centrate flow', 'filtrate gpm', 'centrate gpm', 'return flow dewatering'],
-        'feed_solids': ['feed solids', 'influent solids concentration', 'feed ts', 'raw sludge solids'],
-        'thickener_feed': ['thickener feed', 'gravity thickener feed', 'thickener inlet flow', 'feed rate gpm'],
-        'thickener_underflow': ['thickener underflow', 'gravity thickener underflow', 'underflow ts', 'underflow solids', 'thickener underflow solids'],
-        'thickener_overflow': ['thickener overflow', 'gravity thickener overflow', 'overflow tss', 'overflow turbidity', 'thickener overflow tss'],
-        'thickener_torque': ['thickener torque', 'rake torque', 'thickener rake torque'],
-        'gbt_feed': ['gbt feed', 'gravity belt thickener feed', 'belt thickener feed rate'],
-        'gbt_underflow': ['gbt underflow', 'gravity belt thickener underflow', 'belt thickener underflow solids'],
-        'gbt_overflow': ['gbt overflow', 'gravity belt thickener overflow', 'belt thickener overflow tss'],
-        'gbt_belt_speed': ['gbt belt speed', 'gravity belt speed', 'belt thickener speed'],
-        'gbt_polymer': ['gbt polymer', 'gravity belt polymer dose', 'belt thickener polymer', 'daf polymer', 'thickening polymer'],
-        'bowl_speed': ['bowl speed rpm', 'centrifuge bowl speed', 'centrifuge rpm'],
-        'polymer_cost': ['polymer cost', 'polymer price', 'polymer dollar cost', 'chemical cost polymer'],
-        'hauling_cost': ['hauling cost', 'truck hauling cost', 'disposal hauling cost'],
-        'dewatering_run_hours': ['dewatering run hours', 'dewatering equipment hours', 'dewatering uptime hours'],
-        'thickening_run_hours': ['thickening run hours', 'thickener uptime hours', 'gbt run hours'],
-    }
+    auto_detected_params = detect_parameters(df, threshold=55)
 
-    detector = FuzzyParameterDetector(df.columns)
-    detected_params = detector.find_parameters(parameter_keywords, threshold=55)
+    st.header("🔧 Confirm Data Mapping")
+    st.write(
+        "This is exactly what we matched your columns to, with a confidence score. **Every KPI, chart, and "
+        "recommendation below uses only this table** — fix any row that picked the wrong column (this is common "
+        "when a file has several similarly-named fields, e.g. multiple polymer or cake columns) or set it to "
+        "**'— None detected —'** if you don't have that data. Nothing is assumed beyond what you confirm here."
+    )
+    with st.expander("📝 Review & edit detected columns", expanded=True):
+        detected_params = render_mapping_editor(auto_detected_params, df.columns, key_prefix="main")
 
-    st.sidebar.subheader("🔍 Detected Parameters")
-    detected_count = 0
+    st.divider()
+
+    st.sidebar.subheader("🔍 Confirmed Parameters")
+    detected_count = sum(1 for p in detected_params.values() if p['column'])
     for param_name, param_info in detected_params.items():
         if param_info['column']:
             st.sidebar.write(f"✅ {param_name}: **{param_info['column']}** ({param_info['unit']})")
-            detected_count += 1
-    st.sidebar.write(f"\n**Found: {detected_count}/{len(parameter_keywords)} parameters**")
+    st.sidebar.write(f"\n**Confirmed: {detected_count}/{len(detected_params)} parameters**")
 
     analyzer = PerformanceAnalyzer(df, detected_params, plant_info)
     kpi_calculator = KPICalculator(df, detected_params, plant_info)
@@ -892,6 +984,7 @@ else:
         st.header(f"📊 Performance Dashboard - {plant_info.get('name', 'WWTP')}")
         if plant_info.get('location'):
             st.caption(f"📍 {plant_info['location']} | Capacity: {plant_info.get('capacity', 'N/A')} MGD")
+        st.caption("KPIs below are computed from the columns you confirmed above in **Confirm Data Mapping**.")
 
         dew_kpis = kpi_calculator.calculate_dewatering_kpis()
         thick_kpis = kpi_calculator.calculate_thickening_kpis()
@@ -928,7 +1021,7 @@ else:
     # ============================================================
     with tab2:
         st.header("💡 AI-Powered Recommendations")
-        st.write("Generated from the KPIs on the Dashboard tab, using only the parameters detected in your data.")
+        st.write("Generated from the KPIs on the Dashboard tab, using only the parameters you confirmed above.")
 
         dew_kpis = kpi_calculator.calculate_dewatering_kpis()
         thick_kpis = kpi_calculator.calculate_thickening_kpis()
@@ -982,7 +1075,7 @@ else:
     # ============================================================
     with tab3:
         st.header("📈 Trend & Benchmark Analysis")
-        st.write("Analyze a single indicator over time, over a custom date range, or benchmark two periods side-by-side.")
+        st.write("Analyze a single indicator over time, over a custom date range, or benchmark two periods.")
 
         numeric_cols = {}
         for param_info in detected_params.values():
@@ -990,155 +1083,200 @@ else:
                 numeric_cols[param_info['column']] = param_info['unit']
 
         if not numeric_cols:
-            st.warning("No numeric columns detected")
+            st.warning("No confirmed numeric columns available. Go back to **Confirm Data Mapping** above.")
         else:
-            mode = st.radio("Analysis Mode", ["Full Timeline", "Custom Period", "Period Comparison (Benchmark)"], horizontal=True)
-
-            col_s1, col_s2 = st.columns(2)
-            with col_s1:
-                selected_column = st.selectbox("Select Indicator", list(numeric_cols.keys()), format_func=lambda x: f"{x} ({numeric_cols[x]})")
-            with col_s2:
-                aggregation = st.selectbox("Aggregation Period", ["Daily", "Weekly", "Monthly", "Quarterly"])
-
+            mode = st.radio("Analysis Mode", ["Full Timeline", "Custom Period", "Period A vs Period B (Benchmark)"], horizontal=True)
             freq_map = {"Daily": 'D', "Weekly": 'W', "Monthly": 'MS', "Quarterly": 'QS'}
 
-            df_yoy = df[[date_col, selected_column]].copy()
-            df_yoy[date_col] = pd.to_datetime(df_yoy[date_col])
-            df_yoy[selected_column] = pd.to_numeric(df_yoy[selected_column], errors='coerce')
-            df_yoy = df_yoy.dropna()
+            # --------------------------------------------------
+            # FULL TIMELINE / CUSTOM PERIOD (single file)
+            # --------------------------------------------------
+            if mode in ("Full Timeline", "Custom Period"):
+                col_s1, col_s2 = st.columns(2)
+                with col_s1:
+                    selected_column = st.selectbox("Select Indicator", list(numeric_cols.keys()), format_func=lambda x: f"{x} ({numeric_cols[x]})")
+                with col_s2:
+                    aggregation = st.selectbox("Aggregation Period", ["Daily", "Weekly", "Monthly", "Quarterly"])
 
-            if len(df_yoy) == 0:
-                st.warning("No valid numeric data for the selected indicator")
+                df_yoy = df[[date_col, selected_column]].copy()
+                df_yoy[date_col] = pd.to_datetime(df_yoy[date_col])
+                df_yoy[selected_column] = pd.to_numeric(df_yoy[selected_column], errors='coerce')
+                df_yoy = df_yoy.dropna()
+
+                if len(df_yoy) == 0:
+                    st.warning("No valid numeric data for the selected indicator")
+                else:
+                    data_min = df_yoy[date_col].min().date()
+                    data_max = df_yoy[date_col].max().date()
+
+                    def plot_series(df_agg, title):
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(x=df_agg.index, y=df_agg.values, mode='lines+markers', name=selected_column, line=dict(color='#1f77b4', width=2), marker=dict(size=6)))
+                        x_numeric = np.arange(len(df_agg))
+                        z = None
+                        if len(x_numeric) > 1:
+                            z = np.polyfit(x_numeric, df_agg.values, 1)
+                            p = np.poly1d(z)
+                            fig.add_trace(go.Scatter(x=df_agg.index, y=p(x_numeric), mode='lines', name='Trend', line=dict(color='red', width=2, dash='dash')))
+                        fig.update_layout(title=title, xaxis_title="Date", yaxis_title=numeric_cols[selected_column], height=500, hovermode='x unified')
+                        st.plotly_chart(fig, use_container_width=True)
+
+                        stat_c1, stat_c2, stat_c3, stat_c4 = st.columns(4)
+                        with stat_c1:
+                            st.metric("Mean", f"{df_agg.mean():.2f}")
+                        with stat_c2:
+                            st.metric("Median", f"{df_agg.median():.2f}")
+                        with stat_c3:
+                            st.metric("Min", f"{df_agg.min():.2f}")
+                        with stat_c4:
+                            st.metric("Max", f"{df_agg.max():.2f}")
+
+                        if z is not None:
+                            direction = "📈 Increasing" if z[0] > 0 else "📉 Decreasing"
+                            st.write(f"**Trend:** {direction} (slope: {z[0]:.4f} per {aggregation.lower()[:-2] if aggregation != 'Daily' else 'day'})")
+
+                    if mode == "Full Timeline":
+                        try:
+                            df_agg = df_yoy.set_index(date_col)[selected_column].resample(freq_map[aggregation]).mean().dropna()
+                            if len(df_agg) > 0:
+                                plot_series(df_agg, f"{selected_column} - {aggregation} Aggregation (Full Timeline)")
+                            else:
+                                st.warning("No data available after aggregation")
+                        except Exception as e:
+                            st.error(f"Error processing data: {e}")
+
+                    else:  # Custom Period
+                        date_range = st.date_input("Select Date Range", value=(data_min, data_max), min_value=data_min, max_value=data_max)
+                        if isinstance(date_range, tuple) and len(date_range) == 2:
+                            start_d, end_d = date_range
+                            mask = (df_yoy[date_col].dt.date >= start_d) & (df_yoy[date_col].dt.date <= end_d)
+                            df_period = df_yoy[mask]
+                            if len(df_period) == 0:
+                                st.warning("No data in the selected range")
+                            else:
+                                try:
+                                    df_agg = df_period.set_index(date_col)[selected_column].resample(freq_map[aggregation]).mean().dropna()
+                                    if len(df_agg) > 0:
+                                        plot_series(df_agg, f"{selected_column} - {start_d.strftime('%b %d, %Y')} to {end_d.strftime('%b %d, %Y')}")
+                                    else:
+                                        st.warning("No data available after aggregation for this range")
+                                except Exception as e:
+                                    st.error(f"Error processing data: {e}")
+                        else:
+                            st.info("👆 Select both a start and end date to continue")
+
+            # --------------------------------------------------
+            # PERIOD A vs PERIOD B (two separate files)
+            # --------------------------------------------------
             else:
-                data_min = df_yoy[date_col].min().date()
-                data_max = df_yoy[date_col].max().date()
+                st.write(
+                    "Upload a **separate CSV for each period** (e.g. an export covering Jan–Jun 2025, and another "
+                    "covering Jan–Jun 2026), confirm each file's column mapping, then compare an indicator across both."
+                )
 
-                def plot_series(df_agg, title):
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=df_agg.index, y=df_agg.values, mode='lines+markers', name=selected_column, line=dict(color='#1f77b4', width=2), marker=dict(size=6)))
-                    x_numeric = np.arange(len(df_agg))
-                    z = None
-                    if len(x_numeric) > 1:
-                        z = np.polyfit(x_numeric, df_agg.values, 1)
-                        p = np.poly1d(z)
-                        fig.add_trace(go.Scatter(x=df_agg.index, y=p(x_numeric), mode='lines', name='Trend', line=dict(color='red', width=2, dash='dash')))
-                    fig.update_layout(title=title, xaxis_title="Date", yaxis_title=numeric_cols[selected_column], height=500, hovermode='x unified')
-                    st.plotly_chart(fig, use_container_width=True)
+                colA, colB = st.columns(2)
+                with colA:
+                    st.markdown("#### 📁 Period A File")
+                    file_a = st.file_uploader("Upload Period A CSV", type=['csv'], key="period_a_file")
+                with colB:
+                    st.markdown("#### 📁 Period B File")
+                    file_b = st.file_uploader("Upload Period B CSV", type=['csv'], key="period_b_file")
 
-                    stat_c1, stat_c2, stat_c3, stat_c4 = st.columns(4)
-                    with stat_c1:
-                        st.metric("Mean", f"{df_agg.mean():.2f}")
-                    with stat_c2:
-                        st.metric("Median", f"{df_agg.median():.2f}")
-                    with stat_c3:
-                        st.metric("Min", f"{df_agg.min():.2f}")
-                    with stat_c4:
-                        st.metric("Max", f"{df_agg.max():.2f}")
-
-                    if z is not None:
-                        direction = "📈 Increasing" if z[0] > 0 else "📉 Decreasing"
-                        st.write(f"**Trend:** {direction} (slope: {z[0]:.4f} per {aggregation.lower()[:-2] if aggregation != 'Daily' else 'day'})")
-
-                if mode == "Full Timeline":
+                if file_a is not None and file_b is not None:
                     try:
-                        df_agg = df_yoy.set_index(date_col)[selected_column].resample(freq_map[aggregation]).mean().dropna()
-                        if len(df_agg) > 0:
-                            plot_series(df_agg, f"{selected_column} - {aggregation} Aggregation (Full Timeline)")
-                        else:
-                            st.warning("No data available after aggregation")
+                        df_a_raw, date_col_a = load_wwtp_csv(file_a)
+                        df_b_raw, date_col_b = load_wwtp_csv(file_b)
                     except Exception as e:
-                        st.error(f"Error processing data: {e}")
+                        st.error(f"Error loading one of the files: {e}")
+                        st.stop()
 
-                elif mode == "Custom Period":
-                    date_range = st.date_input("Select Date Range", value=(data_min, data_max), min_value=data_min, max_value=data_max)
-                    if isinstance(date_range, tuple) and len(date_range) == 2:
-                        start_d, end_d = date_range
-                        mask = (df_yoy[date_col].dt.date >= start_d) & (df_yoy[date_col].dt.date <= end_d)
-                        df_period = df_yoy[mask]
-                        if len(df_period) == 0:
-                            st.warning("No data in the selected range")
-                        else:
-                            try:
-                                df_agg = df_period.set_index(date_col)[selected_column].resample(freq_map[aggregation]).mean().dropna()
-                                if len(df_agg) > 0:
-                                    plot_series(df_agg, f"{selected_column} - {start_d.strftime('%b %d, %Y')} to {end_d.strftime('%b %d, %Y')}")
-                                else:
-                                    st.warning("No data available after aggregation for this range")
-                            except Exception as e:
-                                st.error(f"Error processing data: {e}")
+                    dp_a_auto = detect_parameters(df_a_raw, threshold=55)
+                    dp_b_auto = detect_parameters(df_b_raw, threshold=55)
+
+                    st.caption(f"Period A: {df_a_raw[date_col_a].min().date()} to {df_a_raw[date_col_a].max().date()} ({len(df_a_raw)} records)")
+                    with st.expander("📝 Confirm Period A column mapping", expanded=False):
+                        dp_a = render_mapping_editor(dp_a_auto, df_a_raw.columns, key_prefix="period_a")
+
+                    st.caption(f"Period B: {df_b_raw[date_col_b].min().date()} to {df_b_raw[date_col_b].max().date()} ({len(df_b_raw)} records)")
+                    with st.expander("📝 Confirm Period B column mapping", expanded=False):
+                        dp_b = render_mapping_editor(dp_b_auto, df_b_raw.columns, key_prefix="period_b")
+
+                    # Only offer parameters confirmed as present in BOTH files
+                    shared_keys = [k for k in dp_a if dp_a[k]['column'] and dp_b.get(k, {}).get('column')]
+
+                    if not shared_keys:
+                        st.warning("No parameter is confirmed in both files yet. Check the mapping tables above.")
                     else:
-                        st.info("👆 Select both a start and end date to continue")
+                        def label_for(k):
+                            name = DEWATERING_KPI_DEFINITIONS.get(k, {}).get('name') or THICKENING_KPI_DEFINITIONS.get(k, {}).get('name') or k
+                            return f"{name}  [A: {dp_a[k]['column']}  |  B: {dp_b[k]['column']}]"
 
-                else:  # Period Comparison (Benchmark)
-                    st.write("**Compare two time periods on the same chart** (e.g., Jan–Jun 2025 vs Jan–Jun 2026)")
-                    pc1, pc2 = st.columns(2)
-                    with pc1:
-                        st.markdown("**Period A**")
-                        a_range = st.date_input("Period A date range", value=(data_min, data_min), min_value=data_min, max_value=data_max, key="period_a")
-                    with pc2:
-                        st.markdown("**Period B**")
-                        b_range = st.date_input("Period B date range", value=(data_max, data_max), min_value=data_min, max_value=data_max, key="period_b")
+                        sel_col1, sel_col2 = st.columns(2)
+                        with sel_col1:
+                            selected_key = st.selectbox("Select Indicator (present in both files)", shared_keys, format_func=label_for)
+                        with sel_col2:
+                            aggregation = st.selectbox("Aggregation Period", ["Daily", "Weekly", "Monthly", "Quarterly"], key="benchmark_agg")
 
-                    if isinstance(a_range, tuple) and len(a_range) == 2 and isinstance(b_range, tuple) and len(b_range) == 2:
-                        a_start, a_end = a_range
-                        b_start, b_end = b_range
-                        mask_a = (df_yoy[date_col].dt.date >= a_start) & (df_yoy[date_col].dt.date <= a_end)
-                        mask_b = (df_yoy[date_col].dt.date >= b_start) & (df_yoy[date_col].dt.date <= b_end)
-                        df_a = df_yoy[mask_a].copy()
-                        df_b = df_yoy[mask_b].copy()
+                        col_a_name = dp_a[selected_key]['column']
+                        col_b_name = dp_b[selected_key]['column']
+                        unit_a = dp_a[selected_key]['unit']
 
-                        if len(df_a) == 0 or len(df_b) == 0:
-                            st.warning("One or both periods have no data. Adjust the date ranges above.")
+                        df_a_s = df_a_raw[[date_col_a, col_a_name]].copy()
+                        df_a_s[date_col_a] = pd.to_datetime(df_a_s[date_col_a])
+                        df_a_s[col_a_name] = pd.to_numeric(df_a_s[col_a_name], errors='coerce')
+                        df_a_s = df_a_s.dropna()
+
+                        df_b_s = df_b_raw[[date_col_b, col_b_name]].copy()
+                        df_b_s[date_col_b] = pd.to_datetime(df_b_s[date_col_b])
+                        df_b_s[col_b_name] = pd.to_numeric(df_b_s[col_b_name], errors='coerce')
+                        df_b_s = df_b_s.dropna()
+
+                        if len(df_a_s) == 0 or len(df_b_s) == 0:
+                            st.warning("One of the selected columns has no valid numeric data.")
                         else:
-                            try:
-                                agg_a = df_a.set_index(date_col)[selected_column].resample(freq_map[aggregation]).mean().dropna()
-                                agg_b = df_b.set_index(date_col)[selected_column].resample(freq_map[aggregation]).mean().dropna()
+                            agg_a = df_a_s.set_index(date_col_a)[col_a_name].resample(freq_map[aggregation]).mean().dropna()
+                            agg_b = df_b_s.set_index(date_col_b)[col_b_name].resample(freq_map[aggregation]).mean().dropna()
 
-                                label_a = f"{a_start.strftime('%b %Y')} - {a_end.strftime('%b %Y')}"
-                                label_b = f"{b_start.strftime('%b %Y')} - {b_end.strftime('%b %Y')}"
+                            label_a = f"Period A ({df_a_s[date_col_a].min().strftime('%b %Y')} - {df_a_s[date_col_a].max().strftime('%b %Y')})"
+                            label_b = f"Period B ({df_b_s[date_col_b].min().strftime('%b %Y')} - {df_b_s[date_col_b].max().strftime('%b %Y')})"
 
-                                x_a = list(range(len(agg_a)))
-                                x_b = list(range(len(agg_b)))
+                            fig = go.Figure()
+                            fig.add_trace(go.Scatter(x=list(range(len(agg_a))), y=agg_a.values, mode='lines+markers', name=label_a, line=dict(color='#1f77b4', width=3)))
+                            fig.add_trace(go.Scatter(x=list(range(len(agg_b))), y=agg_b.values, mode='lines+markers', name=label_b, line=dict(color='#ff7f0e', width=3)))
+                            fig.update_layout(
+                                title=f"Period A vs Period B: {label_for(selected_key).split('[')[0].strip()}",
+                                xaxis_title=f"{aggregation} Period Offset (0 = start of each period)",
+                                yaxis_title=unit_a, height=500, hovermode='x unified',
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
 
-                                fig = go.Figure()
-                                fig.add_trace(go.Scatter(x=x_a, y=agg_a.values, mode='lines+markers', name=label_a, line=dict(color='#1f77b4', width=3)))
-                                fig.add_trace(go.Scatter(x=x_b, y=agg_b.values, mode='lines+markers', name=label_b, line=dict(color='#ff7f0e', width=3)))
-                                fig.update_layout(
-                                    title=f"Benchmark Comparison: {selected_column}",
-                                    xaxis_title=f"{aggregation} Period Offset (0 = start of each period)",
-                                    yaxis_title=numeric_cols[selected_column], height=500, hovermode='x unified',
-                                )
-                                st.plotly_chart(fig, use_container_width=True)
+                            st.subheader("📊 Comparison Statistics")
+                            stat_df = pd.DataFrame({
+                                'Metric': ['Mean', 'Median', 'Min', 'Max', 'Std Dev'],
+                                label_a: [agg_a.mean(), agg_a.median(), agg_a.min(), agg_a.max(), agg_a.std()],
+                                label_b: [agg_b.mean(), agg_b.median(), agg_b.min(), agg_b.max(), agg_b.std()],
+                            })
+                            stat_df['% Change (A→B)'] = ((stat_df[label_b] - stat_df[label_a]) / stat_df[label_a] * 100)
+                            st.dataframe(stat_df.round(3), use_container_width=True)
 
-                                st.subheader("📊 Comparison Statistics")
-                                stat_df = pd.DataFrame({
-                                    'Metric': ['Mean', 'Median', 'Min', 'Max', 'Std Dev'],
-                                    label_a: [agg_a.mean(), agg_a.median(), agg_a.min(), agg_a.max(), agg_a.std()],
-                                    label_b: [agg_b.mean(), agg_b.median(), agg_b.min(), agg_b.max(), agg_b.std()],
-                                })
-                                stat_df['% Change (A→B)'] = ((stat_df[label_b] - stat_df[label_a]) / stat_df[label_a] * 100)
-                                st.dataframe(stat_df.round(3), use_container_width=True)
-
-                                if agg_a.mean() != 0:
-                                    pct_change_mean = (agg_b.mean() - agg_a.mean()) / agg_a.mean() * 100
-                                    direction = "increased" if pct_change_mean > 0 else "decreased"
-                                    st.info(f"**{selected_column}** {direction} by **{abs(pct_change_mean):.1f}%** from {label_a} to {label_b}")
-                            except Exception as e:
-                                st.error(f"Error processing comparison: {e}")
-                    else:
-                        st.info("👆 Select both a start and end date for each period to continue")
+                            if agg_a.mean() != 0:
+                                pct_change_mean = (agg_b.mean() - agg_a.mean()) / agg_a.mean() * 100
+                                direction = "increased" if pct_change_mean > 0 else "decreased"
+                                st.info(f"**{col_a_name} / {col_b_name}** {direction} by **{abs(pct_change_mean):.1f}%** from Period A to Period B")
+                else:
+                    st.info("👆 Upload both a Period A and a Period B CSV to compare them.")
 
     # ============================================================
     # TAB 4: CORRELATION ANALYSIS
     # ============================================================
     with tab4:
         st.header("🔗 Correlation Analysis")
-        st.write("Analyze relationships between detected WWTP parameters.")
+        st.write("Analyze relationships between confirmed WWTP parameters.")
 
         corr_matrix = correlation_analyzer.calculate_correlations()
 
         if corr_matrix is None or len(corr_matrix.columns) < 2:
-            st.warning("Not enough numeric parameters detected for correlation analysis. Check the Parameters tab to see what was found.")
+            st.warning("Not enough confirmed numeric parameters for correlation analysis. Check **Confirm Data Mapping** above.")
         else:
             st.subheader("📊 Correlation Heatmap")
             fig_heatmap = correlation_analyzer.create_correlation_heatmap()
@@ -1184,6 +1322,7 @@ else:
             st.subheader("Polymer Efficiency")
             poly_col = detected_params['polymer']['column']
             poly_unit = detected_params['polymer']['unit']
+            st.caption(f"Column used: **{poly_col}**")
             fig = chart_renderer.render_line_with_ma(poly_col, poly_unit, "Polymer Efficiency", threshold_excellent=12, threshold_good=15)
             st.plotly_chart(fig, use_container_width=True, key="poly_chart")
             render_footnote('polymer', ' lbs/ton')
@@ -1192,6 +1331,7 @@ else:
             st.subheader("Cake Quality")
             cake_col = detected_params['cake_quality']['column']
             cake_unit = detected_params['cake_quality']['unit']
+            st.caption(f"Column used: **{cake_col}**")
             fig = chart_renderer.render_line_with_ma(cake_col, cake_unit, "Cake Quality", threshold_excellent=25, threshold_good=20)
             st.plotly_chart(fig, use_container_width=True, key="cake_chart")
             render_footnote('cake_quality', '%')
@@ -1200,6 +1340,7 @@ else:
             st.subheader("Dewatering Efficiency (Dry/Wet Ratio)")
             dry_col = detected_params['dry_tons']['column']
             wet_col = detected_params['wet_tons']['column']
+            st.caption(f"Columns used: **{dry_col}** / **{wet_col}**")
             fig = chart_renderer.render_ratio(dry_col, wet_col, "Ratio", "Dry/Wet Ratio", threshold_excellent=0.25, threshold_good=0.20)
             st.plotly_chart(fig, use_container_width=True, key="ratio_chart")
             render_footnote('dry_wet_ratio')
@@ -1208,10 +1349,14 @@ else:
             st.subheader("Sludge Truck Hauling")
             truck_col = detected_params['trucks']['column']
             truck_unit = detected_params['trucks']['unit']
+            st.caption(f"Column used: **{truck_col}**")
             fig = chart_renderer.render_bar_with_ma(truck_col, truck_unit, "Daily Sludge Trucks")
             st.plotly_chart(fig, use_container_width=True, key="truck_chart")
             st.caption("ℹ️ No fixed industry benchmark for truck counts - fewer trucks generally indicates better dewatering "
                        "(higher cake solids = less volume to haul). Compare against your own historical baseline.")
+
+        if not any(detected_params.get(k, {}).get('column') for k in ['polymer', 'cake_quality', 'dry_tons', 'wet_tons', 'trucks']):
+            st.info("No dewatering indicators are confirmed yet. Check **Confirm Data Mapping** above.")
 
     # ============================================================
     # TAB 6: THICKENING
@@ -1224,6 +1369,7 @@ else:
             st.subheader("Gravity Thickener - Underflow Concentration")
             uf_col = detected_params['thickener_underflow']['column']
             uf_unit = detected_params['thickener_underflow']['unit']
+            st.caption(f"Column used: **{uf_col}**")
             fig = chart_renderer.render_line_with_ma(uf_col, uf_unit, "Underflow Concentration", threshold_excellent=5, threshold_good=3)
             st.plotly_chart(fig, use_container_width=True, key="thick_uf_chart")
             render_footnote('thickener_underflow', '%')
@@ -1232,14 +1378,19 @@ else:
             st.subheader("Gravity Thickener - Overflow Clarity")
             of_col = detected_params['thickener_overflow']['column']
             of_unit = detected_params['thickener_overflow']['unit']
+            st.caption(f"Column used: **{of_col}** (unit: {of_unit})")
             fig = chart_renderer.render_line_with_ma(of_col, of_unit, "Overflow TSS", threshold_excellent=500, threshold_good=1000)
             st.plotly_chart(fig, use_container_width=True, key="thick_of_chart")
-            render_footnote('thickener_overflow', ' mg/L')
+            if of_unit in ('mg/L', 'NTU'):
+                render_footnote('thickener_overflow', f' {of_unit}')
+            else:
+                st.caption("ℹ️ Benchmark lines assume mg/L TSS — verify against your column's actual unit before comparing.")
 
         if detected_params.get('gbt_underflow', {}).get('column'):
             st.subheader("GBT - Underflow Concentration")
             gbt_uf_col = detected_params['gbt_underflow']['column']
             gbt_uf_unit = detected_params['gbt_underflow']['unit']
+            st.caption(f"Column used: **{gbt_uf_col}**")
             fig = chart_renderer.render_line_with_ma(gbt_uf_col, gbt_uf_unit, "GBT Underflow Concentration", threshold_excellent=8, threshold_good=5)
             st.plotly_chart(fig, use_container_width=True, key="gbt_uf_chart")
             render_footnote('gbt_underflow', '%')
@@ -1248,14 +1399,17 @@ else:
             st.subheader("GBT - Overflow Clarity")
             gbt_of_col = detected_params['gbt_overflow']['column']
             gbt_of_unit = detected_params['gbt_overflow']['unit']
+            st.caption(f"Column used: **{gbt_of_col}** (unit: {gbt_of_unit})")
             fig = chart_renderer.render_line_with_ma(gbt_of_col, gbt_of_unit, "GBT Overflow TSS", threshold_excellent=300, threshold_good=500)
             st.plotly_chart(fig, use_container_width=True, key="gbt_of_chart")
-            render_footnote('gbt_overflow', ' mg/L')
+            if gbt_of_unit in ('mg/L', 'NTU'):
+                render_footnote('gbt_overflow', f' {gbt_of_unit}')
+            else:
+                st.caption("ℹ️ Benchmark lines assume mg/L TSS — verify against your column's actual unit before comparing.")
 
         if not any(detected_params.get(k, {}).get('column') for k in ['thickener_underflow', 'thickener_overflow', 'gbt_underflow', 'gbt_overflow']):
-            st.info("No thickening indicators were detected in your data. Check the **Parameters** tab to see match "
-                    "scores, or rename your thickening columns to include words like 'underflow', 'overflow', 'GBT', "
-                    "or 'thickener' so they're easier to auto-detect.")
+            st.info("No thickening indicators are confirmed yet. Check **Confirm Data Mapping** above — if your data "
+                    "truly has no thickening columns, that's expected and no values will be invented.")
 
     # ============================================================
     # TAB 7: DATA QUALITY
@@ -1268,7 +1422,7 @@ else:
         with c1:
             st.metric("Total Records", len(df))
         with c2:
-            st.metric("Columns Analyzed", len(columns_to_check))
+            st.metric("Columns Confirmed", len(columns_to_check))
         with c3:
             total_missing = sum(df[col].isna().sum() for col in columns_to_check if col in df.columns)
             st.metric("Total Missing Values", int(total_missing))
@@ -1309,16 +1463,17 @@ else:
     # TAB 8: PARAMETERS
     # ============================================================
     with tab8:
-        st.header("📋 Detected Parameters & Units")
+        st.header("📋 Confirmed Parameters & Units")
         param_data = []
         for param_name, param_info in detected_params.items():
             param_data.append({
+                'Category': categorize_param(param_name),
                 'Parameter': param_name,
                 'Column': param_info['column'] if param_info['column'] else '— not detected —',
                 'Unit': param_info['unit'],
                 'Match Score': f"{param_info['score']:.0f}%",
             })
-        param_df = pd.DataFrame(param_data)
+        param_df = pd.DataFrame(param_data).sort_values(['Category', 'Parameter'])
         st.dataframe(param_df, use_container_width=True)
         csv = param_df.to_csv(index=False)
         st.download_button("📥 Download Parameters", data=csv, file_name="parameters.csv", mime="text/csv")
