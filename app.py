@@ -182,15 +182,19 @@ st.markdown(f"""
 
     /* --- Buttons --- */
     .stButton>button, .stDownloadButton>button {{
-        background-color: {VEOLIA['marine']};
-        color: {VEOLIA['white']};
-        border: none;
-        border-radius: 6px;
-        font-weight: 600;
+        background-color: {VEOLIA['marine']} !important;
+        border: none !important;
+        border-radius: 6px !important;
+        font-weight: 600 !important;
     }}
-    .stButton>button:hover, .stDownloadButton>button:hover {{
-        background-color: {VEOLIA['turquoise']};
-        color: {VEOLIA['marine']};
+    .stButton>button, .stButton>button *,
+    .stDownloadButton>button, .stDownloadButton>button * {{
+        color: {VEOLIA['white']} !important;
+    }}
+    .stButton>button:hover, .stDownloadButton>button:hover,
+    .stButton>button:hover *, .stDownloadButton>button:hover * {{
+        background-color: {VEOLIA['turquoise']} !important;
+        color: {VEOLIA['marine']} !important;
     }}
 
     /* --- Expanders --- */
@@ -324,13 +328,13 @@ def render_chart_with_download(fig, key):
     with dl_col:
         try:
             img_bytes = fig.to_image(format="png", scale=2)
-            st.download_button("⬇️ PNG", data=img_bytes, file_name=f"{key}.png", mime="image/png",
-                                key=f"dl_{key}", use_container_width=True)
+            st.download_button("⬇️ Download Chart", data=img_bytes, file_name=f"{key}.png", mime="image/png",
+                                key=f"dl_{key}", use_container_width=True, help="Download this chart as a PNG image.")
         except Exception as e:
             html_bytes = fig.to_html(full_html=True, include_plotlyjs='cdn').encode('utf-8')
-            st.download_button("⬇️ HTML", data=html_bytes, file_name=f"{key}.html", mime="text/html",
+            st.download_button("⬇️ Download Chart", data=html_bytes, file_name=f"{key}.html", mime="text/html",
                                 key=f"dl_{key}", use_container_width=True,
-                                help=f"PNG export failed, downloading interactive HTML instead. Reason: {e}")
+                                help=f"PNG export failed, downloading an interactive HTML chart instead. Reason: {e}")
             with st.expander("Why HTML instead of PNG?", expanded=False):
                 st.caption(f"PNG export error: `{e}`")
                 st.caption("Most common cause: kaleido>=1.0 dropped its bundled Chromium and now needs a separate "
