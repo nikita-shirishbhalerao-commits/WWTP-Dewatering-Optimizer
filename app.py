@@ -316,8 +316,9 @@ PLOTLY_CONFIG = {
 def render_chart_with_download(fig, key):
     """Render a Plotly chart, plus an explicit download button under its bottom-right corner
     (in addition to the toolbar's built-in camera icon). Tries a PNG export first (needs the
-    'kaleido' package); if that's not installed, falls back to an interactive HTML download
-    instead of failing, so this never breaks the app on a machine without kaleido."""
+    'kaleido' package, and kaleido>=1.0 also needs a separately-installed Chrome browser); if
+    that fails for any reason, falls back to an interactive HTML download instead of breaking
+    the app, and shows the actual error so the real cause is diagnosable rather than guessed at."""
     st.plotly_chart(fig, use_container_width=True, key=key, config=PLOTLY_CONFIG)
     spacer, dl_col = st.columns([6, 1])
     with dl_col:
@@ -325,11 +326,16 @@ def render_chart_with_download(fig, key):
             img_bytes = fig.to_image(format="png", scale=2)
             st.download_button("⬇️ PNG", data=img_bytes, file_name=f"{key}.png", mime="image/png",
                                 key=f"dl_{key}", use_container_width=True)
-        except Exception:
+        except Exception as e:
             html_bytes = fig.to_html(full_html=True, include_plotlyjs='cdn').encode('utf-8')
             st.download_button("⬇️ HTML", data=html_bytes, file_name=f"{key}.html", mime="text/html",
                                 key=f"dl_{key}", use_container_width=True,
-                                help="PNG export needs the 'kaleido' package; downloading an interactive HTML chart instead.")
+                                help=f"PNG export failed, downloading interactive HTML instead. Reason: {e}")
+            with st.expander("Why HTML instead of PNG?", expanded=False):
+                st.caption(f"PNG export error: `{e}`")
+                st.caption("Most common cause: kaleido>=1.0 dropped its bundled Chromium and now needs a separate "
+                           "browser install. Fix: pin `kaleido==0.2.1` in requirements.txt (last version with a "
+                           "bundled headless browser, no extra install step needed) and redeploy/reboot the app.")
 
 
 def status_chip(status_text):
