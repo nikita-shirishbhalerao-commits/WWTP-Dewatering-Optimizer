@@ -232,6 +232,23 @@ st.markdown(f"""
     section[data-testid="stSidebar"] [data-testid="stFileUploaderFile"] svg {{
         fill: {VEOLIA['white']} !important;
     }}
+    /* Dropzone + Browse button (shown before any file is uploaded): light background,
+       so text/button must be dark navy here, not white - this is the opposite pairing
+       from the rest of the sidebar. */
+    section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {{
+        background: {VEOLIA['white']} !important;
+        border: 2px dashed rgba(255,255,255,0.4);
+        border-radius: 8px;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] * {{
+        color: {VEOLIA['marine']} !important;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button {{
+        background: {VEOLIA['turquoise']} !important;
+        color: {VEOLIA['marine']} !important;
+        border: none !important;
+        font-weight: 600 !important;
+    }}
 
     /* --- Dataframes --- */
     [data-testid="stDataFrame"] {{
@@ -294,6 +311,25 @@ PLOTLY_CONFIG = {
     'toImageButtonOptions': {'format': 'png', 'scale': 2, 'filename': 'chart'},
     'modeBarButtonsToAdd': ['toImage'],
 }
+
+
+def render_chart_with_download(fig, key):
+    """Render a Plotly chart, plus an explicit download button under its bottom-right corner
+    (in addition to the toolbar's built-in camera icon). Tries a PNG export first (needs the
+    'kaleido' package); if that's not installed, falls back to an interactive HTML download
+    instead of failing, so this never breaks the app on a machine without kaleido."""
+    st.plotly_chart(fig, use_container_width=True, key=key, config=PLOTLY_CONFIG)
+    spacer, dl_col = st.columns([6, 1])
+    with dl_col:
+        try:
+            img_bytes = fig.to_image(format="png", scale=2)
+            st.download_button("⬇️ PNG", data=img_bytes, file_name=f"{key}.png", mime="image/png",
+                                key=f"dl_{key}", use_container_width=True)
+        except Exception:
+            html_bytes = fig.to_html(full_html=True, include_plotlyjs='cdn').encode('utf-8')
+            st.download_button("⬇️ HTML", data=html_bytes, file_name=f"{key}.html", mime="text/html",
+                                key=f"dl_{key}", use_container_width=True,
+                                help="PNG export needs the 'kaleido' package; downloading an interactive HTML chart instead.")
 
 
 def status_chip(status_text):
@@ -555,6 +591,7 @@ PARAMETER_KEYWORDS = {
     'polymer': ['act poly dry ton', 'lbs act poly dry ton', 'active polymer dry ton', 'polymer dose lbs ton',
                 'active poly lbs per dt', 'centrifuge act poly dry ton', 'active polymer', 'polymer dose', 'poly dose lbs/ton'],
     'polymer_raw': ['raw polymer dry ton', 'neat poly dry ton', 'raw poly per dry ton', 'neat polymer dry ton', 'raw polymer product dose', 'neat poly/dry ton'],
+    'polymer_gpd': ['polymer gpd feed rate', 'polymer feed gpd', 'raw polymer gpd', 'polymer solution gpd'],
     'cake_quality': ['cake solids', 'cake percent', 'cake quality', 'percent solids cake', 'dewatered solids', 'cake ts', 'cake dry solids', 'cake avg'],
     'centrifuge_1_hours': ['centrifuge 1 hours', 'c1 run hours', 'centrifuge 1 runtime'],
     'centrifuge_2_hours': ['centrifuge 2 hours', 'c2 run hours', 'centrifuge 2 runtime'],
@@ -609,6 +646,7 @@ PARAMETER_KEYWORDS = {
 EXPECTED_UNIT_FAMILIES = {
     'polymer': {'lbs/ton'},
     'polymer_raw': {'lbs/ton'},
+    'polymer_gpd': {'GPD'},
     'cake_quality': {'%'},
     'dry_tons': {'Dry Tons', 'Tons'},
     'wet_tons': {'Wet Tons', 'Tons'},
@@ -729,6 +767,7 @@ REQUIRED_TOKEN_GROUPS = {
 EXCLUDE_TOKENS = {
     'polymer': ['gbt', 'thickener', 'thickening', 'daf'],
     'polymer_raw': ['gbt', 'thickener', 'thickening', 'daf'],
+    'polymer_gpd': ['gbt', 'thickener', 'thickening', 'daf'],
     'polymer_cost': ['gbt', 'thickener', 'thickening', 'daf', 'haul', 'truck'],
     'hauling_cost': ['polymer', 'poly'],
     'cake_quality': ['gbt', 'thickener', 'thickening'],
@@ -1196,22 +1235,42 @@ class KPICalculator:
 
         poly_col = self.dp.get('polymer', {}).get('column')
         poly_raw_col = self.dp.get('polymer_raw', {}).get('column')
+        poly_raw_unit = self.dp.get('polymer_raw', {}).get('unit')
+        poly_gpd_col = self.dp.get('polymer_gpd', {}).get('column')
         poly_active = self._col('polymer')
         poly_raw = self._col('polymer_raw')
+        poly_gpd = self._col('polymer_gpd')
         activity_input = self.plant_info.get('dewatering_polymer_activity_pct')
 
         if poly_active is not None:
             v = poly_active.mean()
             k['active_polymer_dose'] = {'value': v, 'unit': 'lbs/ton', 'target': '5-15 lbs active/ton DS', 'status': self._status_range(v, 5, 15),
                                          'basis': f"Average of **{poly_col}**, confirmed as an active-basis lbs/ton dose."}
-        elif poly_raw is not None and activity_input:
+        elif poly_raw is not None and poly_raw_unit == 'lbs/ton' and activity_input:
+            # Raw/neat column is already a per-ton dose - no flow needed, just scale it by % activity.
             v = poly_raw.mean() * (activity_input / 100)
             k['active_polymer_dose'] = {'value': v, 'unit': 'lbs/ton (estimated)', 'target': '5-15 lbs active/ton DS', 'status': self._status_range(v, 5, 15),
-                                         'basis': (f"Average **{poly_raw_col}** × {activity_input:g}% product activity (entered in Plant Information) — "
-                                                   f"estimated, not directly measured.")}
+                                         'basis': (f"Average **{poly_raw_col}** (already a lbs product/ton DS dose) × {activity_input:g}% product activity "
+                                                   f"(Plant Information) = lbs active/ton DS. Flow isn't needed here since the raw column is already normalized per ton.")}
+        elif poly_gpd is not None and activity_input and dry is not None and dry.mean() > 0:
+            # Raw column is a volumetric feed rate (GPD), not a dose - this DOES need flow, converted
+            # to a mass basis (assuming ~8.34 lbs/gal, i.e. specific gravity ≈ 1.0 for the solution)
+            # and then normalized by dry tons/day throughput.
+            v = (poly_gpd.mean() * 8.34 * (activity_input / 100)) / dry.mean()
+            k['active_polymer_dose'] = {'value': v, 'unit': 'lbs/ton (estimated)', 'target': '5-15 lbs active/ton DS', 'status': self._status_range(v, 5, 15),
+                                         'basis': (f"Average **{poly_gpd_col}** (gpd) × 8.34 lbs/gal (assumes solution specific gravity ≈ 1.0) × "
+                                                   f"{activity_input:g}% product activity (Plant Information) ÷ average **{dry_col or '(dry tons)'}** "
+                                                   f"(tons/day) = lbs active/ton DS. This is the flow-based path — used because your raw polymer data "
+                                                   f"is a feed rate (GPD), not an already-normalized per-ton dose.")}
+        elif poly_raw is not None and activity_input and poly_raw_unit != 'lbs/ton':
+            k['active_polymer_dose'] = self._insufficient([
+                f"'{poly_raw_col}' isn't confirmed as a lbs/ton dose (detected unit: {poly_raw_unit}) - if it's actually a volumetric feed "
+                f"rate, map it under 'polymer_gpd' in Confirm Data Mapping instead so the flow-based calculation can be used; if it genuinely "
+                f"is a per-ton dose, correct its Unit to 'lbs/ton' in the mapping table."
+            ])
         else:
-            k['active_polymer_dose'] = self._insufficient(['Active polymer dose (lbs active/ton DS) column, or a raw/neat polymer column plus '
-                                                             'the product\'s % activity entered in Plant Information'])
+            k['active_polymer_dose'] = self._insufficient(['Active polymer dose (lbs active/ton DS) column, or a raw/neat polymer dose (lbs/ton) '
+                                                             'or feed rate (GPD) column plus the product\'s % activity entered in Plant Information'])
 
         if poly_raw is not None:
             v = poly_raw.mean()
@@ -1913,8 +1972,8 @@ else:
         if not numeric_cols:
             st.warning("No numeric columns found in your data.")
         else:
-            analyze_mode = st.radio("Analyze", ["Single Indicator", "Ratio (Numerator ÷ Denominator)"], horizontal=True,
-                                     help="A ratio lets you build any custom metric on the fly, e.g. Polymer Cost ÷ Dry Tons, without needing it to be a predefined KPI.")
+            analyze_mode = st.radio("Analyze", ["Single Indicator", "Ratio"], horizontal=True,
+                                     help="A ratio lets you build any custom metric on the fly (pick a numerator and a denominator column), e.g. Polymer Cost ÷ Dry Tons, without needing it to be a predefined KPI.")
 
             if analyze_mode == "Single Indicator":
                 selected_column = st.selectbox("Select Indicator", list(numeric_cols.keys()), format_func=lambda x: f"{x} ({numeric_cols[x]})")
@@ -1972,7 +2031,7 @@ else:
                         plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', font=dict(color=VEOLIA['marine']),
                         xaxis=dict(gridcolor='#E9EEF1'), yaxis=dict(gridcolor='#E9EEF1'),
                     )
-                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+                    render_chart_with_download(fig, key="trend_single_chart")
 
                     stat_c1, stat_c2, stat_c3, stat_c4 = st.columns(4)
                     with stat_c1:
@@ -2084,7 +2143,7 @@ else:
                                     height=520, hovermode='closest', margin=dict(b=110),
                                     plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', font=dict(color=VEOLIA['marine']),
                                 )
-                                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+                                render_chart_with_download(fig, key="trend_benchmark_chart")
 
                                 st.subheader("📊 Comparison Statistics")
                                 stat_df = pd.DataFrame({
@@ -2119,7 +2178,7 @@ else:
             st.subheader("📊 Correlation Heatmap")
             fig_heatmap = correlation_analyzer.create_correlation_heatmap()
             if fig_heatmap:
-                st.plotly_chart(fig_heatmap, use_container_width=True, config=PLOTLY_CONFIG)
+                render_chart_with_download(fig_heatmap, key="corr_heatmap")
 
             st.divider()
             st.subheader("🔍 Strong Correlations (|r| ≥ 0.7)")
@@ -2153,7 +2212,7 @@ else:
                 st.info("Pick two different parameters to see a scatter plot.")
             else:
                 fig_scatter = correlation_analyzer.create_scatter_plot(x_var, y_var)
-                st.plotly_chart(fig_scatter, use_container_width=True, key="interactive_scatter", config=PLOTLY_CONFIG)
+                render_chart_with_download(fig_scatter, key="interactive_scatter")
 
     # ============================================================
     # TAB 5: DEWATERING
@@ -2168,7 +2227,7 @@ else:
             poly_unit = detected_params['polymer']['unit']
             st.caption(f"Column used: **{poly_col}**")
             fig = chart_renderer.render_line_with_ma(poly_col, poly_unit, "Active Polymer Dose", threshold_excellent=12, threshold_good=15)
-            st.plotly_chart(fig, use_container_width=True, key="poly_chart", config=PLOTLY_CONFIG)
+            render_chart_with_download(fig, key="poly_chart")
             render_footnote('polymer', ' lbs/ton')
 
         if detected_params.get('polymer_raw', {}).get('column'):
@@ -2177,7 +2236,7 @@ else:
             poly_raw_unit = detected_params['polymer_raw']['unit']
             st.caption(f"Column used: **{poly_raw_col}**")
             fig = chart_renderer.render_line_with_ma(poly_raw_col, poly_raw_unit, "Raw/Neat Polymer Dose")
-            st.plotly_chart(fig, use_container_width=True, key="poly_raw_chart", config=PLOTLY_CONFIG)
+            render_chart_with_download(fig, key="poly_raw_chart")
             st.caption("ℹ️ No fixed benchmark — this is product (as-delivered) basis, which varies by polymer concentration. "
                        "Compare against the Active Polymer Dose above and your product's spec sheet.")
 
@@ -2187,7 +2246,7 @@ else:
             cake_unit = detected_params['cake_quality']['unit']
             st.caption(f"Column used: **{cake_col}**")
             fig = chart_renderer.render_line_with_ma(cake_col, cake_unit, "Cake Quality", threshold_excellent=25, threshold_good=20)
-            st.plotly_chart(fig, use_container_width=True, key="cake_chart", config=PLOTLY_CONFIG)
+            render_chart_with_download(fig, key="cake_chart")
             render_footnote('cake_quality', '%')
 
         if detected_params.get('dry_tons', {}).get('column') and detected_params.get('wet_tons', {}).get('column'):
@@ -2196,7 +2255,7 @@ else:
             wet_col = detected_params['wet_tons']['column']
             st.caption(f"Columns used: **{dry_col}** / **{wet_col}**")
             fig = chart_renderer.render_ratio(dry_col, wet_col, "Ratio", "Dry/Wet Ratio", threshold_excellent=0.25, threshold_good=0.20)
-            st.plotly_chart(fig, use_container_width=True, key="ratio_chart", config=PLOTLY_CONFIG)
+            render_chart_with_download(fig, key="ratio_chart")
             render_footnote('dry_wet_ratio')
 
         if detected_params.get('trucks', {}).get('column'):
@@ -2205,7 +2264,7 @@ else:
             truck_unit = detected_params['trucks']['unit']
             st.caption(f"Column used: **{truck_col}**")
             fig = chart_renderer.render_bar_with_ma(truck_col, truck_unit, "Daily Sludge Trucks")
-            st.plotly_chart(fig, use_container_width=True, key="truck_chart", config=PLOTLY_CONFIG)
+            render_chart_with_download(fig, key="truck_chart")
             st.caption("ℹ️ No fixed industry benchmark for truck counts - fewer trucks generally indicates better dewatering "
                        "(higher cake solids = less volume to haul). Compare against your own historical baseline.")
 
@@ -2225,7 +2284,7 @@ else:
             uf_unit = detected_params['thickener_underflow']['unit']
             st.caption(f"Column used: **{uf_col}**")
             fig = chart_renderer.render_line_with_ma(uf_col, uf_unit, "Underflow Concentration", threshold_excellent=5, threshold_good=3)
-            st.plotly_chart(fig, use_container_width=True, key="thick_uf_chart", config=PLOTLY_CONFIG)
+            render_chart_with_download(fig, key="thick_uf_chart")
             render_footnote('thickener_underflow', '%')
 
         if detected_params.get('thickener_overflow', {}).get('column'):
@@ -2234,7 +2293,7 @@ else:
             of_unit = detected_params['thickener_overflow']['unit']
             st.caption(f"Column used: **{of_col}** (unit: {of_unit})")
             fig = chart_renderer.render_line_with_ma(of_col, of_unit, "Overflow TSS", threshold_excellent=500, threshold_good=1000)
-            st.plotly_chart(fig, use_container_width=True, key="thick_of_chart", config=PLOTLY_CONFIG)
+            render_chart_with_download(fig, key="thick_of_chart")
             if of_unit in ('mg/L', 'NTU'):
                 render_footnote('thickener_overflow', f' {of_unit}')
             else:
@@ -2246,7 +2305,7 @@ else:
             gbt_uf_unit = detected_params['gbt_underflow']['unit']
             st.caption(f"Column used: **{gbt_uf_col}**")
             fig = chart_renderer.render_line_with_ma(gbt_uf_col, gbt_uf_unit, "GBT Underflow Concentration", threshold_excellent=8, threshold_good=5)
-            st.plotly_chart(fig, use_container_width=True, key="gbt_uf_chart", config=PLOTLY_CONFIG)
+            render_chart_with_download(fig, key="gbt_uf_chart")
             render_footnote('gbt_underflow', '%')
 
         if detected_params.get('gbt_overflow', {}).get('column'):
@@ -2255,7 +2314,7 @@ else:
             gbt_of_unit = detected_params['gbt_overflow']['unit']
             st.caption(f"Column used: **{gbt_of_col}** (unit: {gbt_of_unit})")
             fig = chart_renderer.render_line_with_ma(gbt_of_col, gbt_of_unit, "GBT Overflow TSS", threshold_excellent=300, threshold_good=500)
-            st.plotly_chart(fig, use_container_width=True, key="gbt_of_chart", config=PLOTLY_CONFIG)
+            render_chart_with_download(fig, key="gbt_of_chart")
             if gbt_of_unit in ('mg/L', 'NTU'):
                 render_footnote('gbt_overflow', f' {gbt_of_unit}')
             else:
@@ -2267,7 +2326,7 @@ else:
             th_poly_unit = detected_params['gbt_polymer']['unit']
             st.caption(f"Column used: **{th_poly_col}**")
             fig = chart_renderer.render_line_with_ma(th_poly_col, th_poly_unit, "Thickening Polymer Dose", threshold_excellent=2, threshold_good=6)
-            st.plotly_chart(fig, use_container_width=True, key="thick_poly_chart", config=PLOTLY_CONFIG)
+            render_chart_with_download(fig, key="thick_poly_chart")
             st.caption("📊 Typical benchmark — 🟢 2-6 lbs active/ton DS for GBT/gravity thickening. DAF systems often run higher; treat as a starting reference, not a hard limit.")
 
         if not any(detected_params.get(k, {}).get('column') for k in ['thickener_underflow', 'thickener_overflow', 'gbt_underflow', 'gbt_overflow']):
