@@ -17,7 +17,7 @@ except ImportError:
 # PAGE CONFIGURATION
 # ============================================================
 st.set_page_config(
-    page_title="Thickening and Dewatering",
+    page_title="AI Powered Thickening and Dewatering Analyzer",
     page_icon="🌊",
     layout="wide",
     initial_sidebar_state="expanded"
