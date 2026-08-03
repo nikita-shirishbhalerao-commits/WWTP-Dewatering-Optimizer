@@ -556,11 +556,41 @@ def load_process_csv(uploaded_file):
         return df, 'Date', True
 
 
+def infer_period_days(df, date_col):
+    """Median gap in days between consecutive records, after sorting. This is how the app figures
+    out whether your data is daily, weekly, or monthly, since that changes what some KPIs mean -
+    e.g. 'run hours this row' is a very different number for a daily row vs. a monthly row."""
+    dates = pd.to_datetime(df[date_col], errors='coerce').dropna().sort_values()
+    if len(dates) < 2:
+        return 1.0
+    diffs = dates.diff().dropna().dt.total_seconds() / 86400.0
+    diffs = diffs[diffs > 0]
+    if len(diffs) == 0:
+        return 1.0
+    return float(diffs.median())
+
+
+def describe_period(period_days):
+    """Human label + a sensible rolling-average window (in periods, not days) for this cadence."""
+    if period_days <= 1.5:
+        return "Daily", 7
+    elif period_days <= 10:
+        return "Weekly", 4
+    elif period_days <= 45:
+        return "Monthly", 3
+    elif period_days <= 120:
+        return "Quarterly", 2
+    else:
+        return "Irregular/Other", 2
+
+
 def render_date_column_selector(df, date_col, used_synthetic, key_prefix):
     """Shows the detected date column/range plainly, warns loudly if synthetic dates were used,
     and always lets the user manually pick the real date column instead - auto-detection can't
     cover every naming convention (e.g. 'Month Year' style columns, non-English headers, etc).
-    Returns the (possibly corrected) df and date_col."""
+    Returns (df, date_col, period_days, period_label, ma_window) - period_days/label tell you
+    whether the data is daily/weekly/monthly, which matters for any KPI built from period totals
+    (e.g. equipment run-hours) rather than instantaneous rates (e.g. flow in GPM, doses in mg/L)."""
     if used_synthetic:
         st.warning(
             "⚠️ **No date column could be confidently auto-detected** — using a placeholder sequential "
@@ -579,18 +609,41 @@ def render_date_column_selector(df, date_col, used_synthetic, key_prefix):
     )
     if choice != "Keep as detected":
         converted = pd.to_datetime(df[choice], errors='coerce')
-        valid_frac = converted.notna().sum() / max(len(df), 1)
-        if valid_frac < 0.5:
-            st.error(f"'{choice}' couldn't be parsed as dates for most rows ({valid_frac:.0%} valid) - keeping the previous date column.")
-            return df, date_col
+        n_before = len(df)
+        n_valid = converted.notna().sum()
+        if n_valid == 0:
+            st.error(f"'{choice}' has no parseable dates at all in any row - keeping the previous date column. "
+                     f"Check that it actually contains dates (e.g. 'Jan 2023', '2023-01-15') and isn't blank/text.")
+            period_days = infer_period_days(df, date_col)
+            period_label, ma_window = describe_period(period_days)
+            st.caption(f"📊 Detected reporting frequency: **{period_label}** (~{period_days:.0f} days between records)")
+            return df, date_col, period_days, period_label, ma_window
+
         new_df = df.copy()
         if used_synthetic and date_col in new_df.columns:
             new_df = new_df.drop(columns=[date_col])
         new_df[choice] = converted
-        new_df = new_df.sort_values(choice).reset_index(drop=True)
-        st.success(f"✅ Using **{choice}** as the date column ({new_df[choice].min().date()} to {new_df[choice].max().date()}, {new_df[choice].notna().sum()}/{len(new_df)} rows parsed).")
-        return new_df, choice
-    return df, date_col
+        n_dropped = n_before - n_valid
+        # Trust the user's column choice - just drop rows that didn't parse (typically blank/malformed
+        # rows, e.g. trailing empty rows from a spreadsheet export) rather than rejecting the whole column.
+        new_df = new_df.dropna(subset=[choice]).sort_values(choice).reset_index(drop=True)
+        if n_dropped > 0:
+            st.warning(f"⚠️ {n_dropped} of {n_before} rows had a blank or unparseable **{choice}** value and were "
+                       f"excluded (they can't be placed on a timeline). **{n_valid} rows remain** for analysis.")
+        st.success(f"✅ Using **{choice}** as the date column ({new_df[choice].min().date()} to {new_df[choice].max().date()}, {n_valid} rows).")
+        period_days = infer_period_days(new_df, choice)
+        period_label, ma_window = describe_period(period_days)
+        st.caption(f"📊 Detected reporting frequency: **{period_label}** (~{period_days:.0f} days between records) — "
+                   f"used to correctly scale any KPI built from period totals (like equipment run-hours), rather "
+                   f"than assuming every row is one day.")
+        return new_df, choice, period_days, period_label, ma_window
+
+    period_days = infer_period_days(df, date_col)
+    period_label, ma_window = describe_period(period_days)
+    st.caption(f"📊 Detected reporting frequency: **{period_label}** (~{period_days:.0f} days between records) — "
+               f"used to correctly scale any KPI built from period totals (like equipment run-hours), rather "
+               f"than assuming every row is one day.")
+    return df, date_col, period_days, period_label, ma_window
 
 
 def detect_parameters(df, keyword_dict, expected_units, required_token_groups, exclude_tokens, threshold=55, exclude_columns=None):
@@ -740,8 +793,13 @@ class CorrelationAnalyzer:
 # CHART RENDERER (generic)
 # ============================================================
 class ChartRenderer:
-    def __init__(self, df):
+    def __init__(self, df, ma_window=7, ma_label=None):
+        """ma_window is in periods (rows), not calendar days - pass the value from
+        render_date_column_selector so 'rolling average' is never mislabeled as '7-day'
+        when the data is actually weekly/monthly."""
         self.df = df
+        self.ma_window = ma_window
+        self.ma_label = ma_label or f"{ma_window}-period Avg"
 
     @staticmethod
     def _base_layout(fig, title, unit):
@@ -757,10 +815,10 @@ class ChartRenderer:
 
     def render_line_with_ma(self, column, unit, title, threshold_excellent=None, threshold_good=None):
         col_data = pd.to_numeric(self.df[column], errors='coerce')
-        col_ma = col_data.rolling(window=7).mean()
+        col_ma = col_data.rolling(window=self.ma_window).mean()
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=self.df.index, y=col_data, mode='markers', name='Daily', marker=dict(size=4, color=VEOLIA['sky_blue'], opacity=0.7)))
-        fig.add_trace(go.Scatter(x=self.df.index, y=col_ma, mode='lines', name='7-day MA', line=dict(color=VEOLIA['marine'], width=2)))
+        fig.add_trace(go.Scatter(x=self.df.index, y=col_data, mode='markers', name='Per record', marker=dict(size=4, color=VEOLIA['sky_blue'], opacity=0.7)))
+        fig.add_trace(go.Scatter(x=self.df.index, y=col_ma, mode='lines', name=self.ma_label, line=dict(color=VEOLIA['marine'], width=2)))
         if threshold_excellent is not None:
             fig.add_hline(y=threshold_excellent, line_dash="dash", line_color=VEOLIA['forest_green'], annotation_text="Excellent", annotation_font_color=VEOLIA['forest_green'])
         if threshold_good is not None:
@@ -769,20 +827,20 @@ class ChartRenderer:
 
     def render_bar_with_ma(self, column, unit, title):
         col_data = pd.to_numeric(self.df[column], errors='coerce')
-        col_ma = col_data.rolling(window=7).mean()
+        col_ma = col_data.rolling(window=self.ma_window).mean()
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=self.df.index, y=col_data, name='Daily', marker=dict(color=VEOLIA['turquoise'], opacity=0.75)))
-        fig.add_trace(go.Scatter(x=self.df.index, y=col_ma, mode='lines', name='7-day MA', line=dict(color=VEOLIA['marine'], width=2)))
+        fig.add_trace(go.Bar(x=self.df.index, y=col_data, name='Per record', marker=dict(color=VEOLIA['turquoise'], opacity=0.75)))
+        fig.add_trace(go.Scatter(x=self.df.index, y=col_ma, mode='lines', name=self.ma_label, line=dict(color=VEOLIA['marine'], width=2)))
         return self._base_layout(fig, f"{title} ({unit})", unit)
 
     def render_ratio(self, column1, column2, unit, title, threshold_excellent=None, threshold_good=None):
         col1_data = pd.to_numeric(self.df[column1], errors='coerce')
         col2_data = pd.to_numeric(self.df[column2], errors='coerce')
         ratio_data = (col1_data / col2_data).replace([np.inf, -np.inf], np.nan)
-        ratio_ma = ratio_data.rolling(window=7).mean()
+        ratio_ma = ratio_data.rolling(window=self.ma_window).mean()
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=self.df.index, y=ratio_data, mode='markers', name='Daily', marker=dict(size=4, color=VEOLIA['sky_blue'], opacity=0.7)))
-        fig.add_trace(go.Scatter(x=self.df.index, y=ratio_ma, mode='lines', name='7-day MA', line=dict(color=VEOLIA['marine'], width=2)))
+        fig.add_trace(go.Scatter(x=self.df.index, y=ratio_data, mode='markers', name='Per record', marker=dict(size=4, color=VEOLIA['sky_blue'], opacity=0.7)))
+        fig.add_trace(go.Scatter(x=self.df.index, y=ratio_ma, mode='lines', name=self.ma_label, line=dict(color=VEOLIA['marine'], width=2)))
         if threshold_excellent is not None:
             fig.add_hline(y=threshold_excellent, line_dash="dash", line_color=VEOLIA['forest_green'], annotation_text="Excellent", annotation_font_color=VEOLIA['forest_green'])
         if threshold_good is not None:
