@@ -9,6 +9,12 @@ from datetime import date
 warnings.filterwarnings('ignore')
 
 try:
+    import anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
+
+try:
     import openpyxl
 except ImportError:
     pass
@@ -341,6 +347,85 @@ def render_chart_with_download(fig, key):
                 st.caption("Most common cause: kaleido>=1.0 dropped its bundled Chromium and now needs a separate "
                            "browser install. Fix: pin `kaleido==0.2.1` in requirements.txt (last version with a "
                            "bundled headless browser, no extra install step needed) and redeploy/reboot the app.")
+
+
+# ============================================================
+# AI PROCESS ENGINEER ASSISTANT (optional - needs the user's own Anthropic API key)
+# ============================================================
+ENGINEER_MODELS = {
+    "Claude Sonnet 5 (recommended)": "claude-sonnet-5",
+    "Claude Haiku 4.5 (faster/cheaper)": "claude-haiku-4-5-20251001",
+    "Claude Opus 4.8 (most capable)": "claude-opus-4-8",
+}
+
+
+def build_kpi_context_summary(plant_info, dew_kpis, thick_kpis, period_caption=None):
+    """Compact plain-text summary of the plant's current KPIs, for grounding the AI assistant
+    in this specific plant's actual data rather than generic wastewater knowledge."""
+    lines = [f"Plant: {plant_info.get('name', 'WWTP')}"]
+    if plant_info.get('location'):
+        lines.append(f"Location: {plant_info['location']}")
+    if plant_info.get('dewatering_equipment'):
+        lines.append(f"Dewatering equipment: {', '.join(plant_info['dewatering_equipment'])}")
+    if plant_info.get('thickening_equipment'):
+        lines.append(f"Thickening equipment: {', '.join(plant_info['thickening_equipment'])}")
+    if period_caption:
+        lines.append(f"Data period shown: {period_caption}")
+
+    lines.append("\nDewatering KPIs:")
+    for key, defn in DEWATERING_KPI_DEFINITIONS.items():
+        val = dew_kpis.get(key)
+        if val and not val.get('insufficient'):
+            lines.append(f"- {defn['name']}: {val['value']:.3f} {val['unit']} (target: {val.get('target', 'N/A')}, "
+                          f"status: {val.get('status', '').strip()})")
+
+    lines.append("\nThickening KPIs:")
+    for key, defn in THICKENING_KPI_DEFINITIONS.items():
+        val = thick_kpis.get(key)
+        if val and not val.get('insufficient'):
+            lines.append(f"- {defn['name']}: {val['value']:.3f} {val['unit']} (target: {val.get('target', 'N/A')}, "
+                          f"status: {val.get('status', '').strip()})")
+
+    return "\n".join(lines)
+
+
+ENGINEER_SYSTEM_PROMPT_TEMPLATE = """You are an experienced wastewater treatment process engineer, specializing in \
+biosolids dewatering (centrifuges, belt filter presses, rotary/screw presses) and thickening (gravity thickeners, \
+gravity belt thickeners, DAF) operations. You are reviewing live operational data for a specific plant.
+
+Here is the current state of their KPIs, computed from their actual uploaded data:
+
+{context}
+
+When answering:
+- Ground your answers in the specific numbers above when relevant - cite actual values, don't speak generically if \
+the data already tells you something.
+- Give practical, actionable engineering advice: likely root causes, troubleshooting steps, typical industry ranges, \
+and what to check or adjust next.
+- Be honest about the limits of what this data can tell you. If something can't be diagnosed from the KPIs shown, \
+say so plainly and suggest what additional data, test, or field observation would help.
+- Keep answers focused and conversational, like a senior engineer talking through a plant walk-through - not an \
+exhaustive report unless asked for one.
+- If asked something unrelated to wastewater treatment, gently redirect back to the plant/process context.
+"""
+
+
+def call_process_engineer(system_prompt, messages, api_key, model, max_tokens=1200):
+    """Call the Anthropic API with the process-engineer persona. Returns (text, error) where
+    exactly one of the two is None - callers should check `error` first."""
+    if not ANTHROPIC_AVAILABLE:
+        return None, ("The 'anthropic' package isn't installed in this environment. Add `anthropic` to "
+                       "requirements.txt and reboot the app to enable this feature.")
+    if not api_key:
+        return None, "No Anthropic API key provided."
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model=model, max_tokens=max_tokens, system=system_prompt, messages=messages,
+        )
+        return response.content[0].text, None
+    except Exception as e:
+        return None, str(e)
 
 
 def status_chip(status_text):
@@ -1831,6 +1916,21 @@ else:
             'thickening_polymer_activity_pct': thickening_polymer_activity_input if thickening_polymer_activity_input > 0 else None,
         }
 
+    with st.sidebar.expander("🧑‍🔬 AI Process Engineer (optional)", expanded=False):
+        if not ANTHROPIC_AVAILABLE:
+            st.caption("Add `anthropic` to requirements.txt and reboot the app to enable the chat assistant and "
+                       "deeper AI commentary on recommendations.")
+        else:
+            st.caption("Powers the 'Ask an Engineer' chat tab and the deeper-analysis buttons on AI Recommendations. "
+                       "Your key is used only for this browser session - it isn't saved to disk, logged, or sent "
+                       "anywhere besides Anthropic's API.")
+            st.text_input("Anthropic API Key", type="password", key="anthropic_api_key",
+                           placeholder="sk-ant-...")
+            st.selectbox("Model", list(ENGINEER_MODELS.keys()), key="engineer_model_label")
+
+    engineer_api_key = st.session_state.get("anthropic_api_key", "")
+    engineer_model = ENGINEER_MODELS.get(st.session_state.get("engineer_model_label"), "claude-sonnet-5")
+
     # ------------------------------------------------------
     # PARAMETER DETECTION + CONFIRM/EDIT MAPPING
     # ------------------------------------------------------
@@ -1860,8 +1960,8 @@ else:
     correlation_analyzer = CorrelationAnalyzer(df, detected_params)
     chart_renderer = ChartRenderer(df)
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
-        "📊 Dashboard", "💡 AI Recommendations", "📈 Trend / Benchmark", "🔗 Correlation Analysis",
+    tab1, tab2, tab2b, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+        "📊 Dashboard", "💡 AI Recommendations", "💬 Ask an Engineer", "📈 Trend / Benchmark", "🔗 Correlation Analysis",
         "🔄 Dewatering", "🌀 Thickening", "🔍 Data Quality", "📋 Parameters", "📥 Raw Data",
     ])
 
@@ -1961,7 +2061,10 @@ else:
         thick_kpis = kpi_calculator.calculate_thickening_kpis()
         recommendations, good_items = analyzer.generate_recommendations(dew_kpis, thick_kpis)
 
-        for rec in recommendations:
+        if ANTHROPIC_AVAILABLE and engineer_api_key:
+            rec_kpi_context = build_kpi_context_summary(plant_info, dew_kpis, thick_kpis)
+
+        for rec_idx, rec in enumerate(recommendations):
             with st.container():
                 col_h1, col_h2 = st.columns([3, 1])
                 with col_h1:
@@ -2001,6 +2104,44 @@ else:
                     for item in rec['additional_data_needed']:
                         st.write(f"• {item}")
 
+                if ANTHROPIC_AVAILABLE and engineer_api_key:
+                    commentary_key = f"engineer_commentary_{rec_idx}_{rec['category']}"
+                    cached = st.session_state.get(commentary_key)
+                    if cached:
+                        with st.expander("🧑‍🔬 AI Process Engineer's Deeper Analysis", expanded=True):
+                            st.markdown(cached)
+                            if st.button("🔄 Regenerate", key=f"regen_{commentary_key}"):
+                                del st.session_state[commentary_key]
+                                st.rerun()
+                    else:
+                        if st.button("🧑‍🔬 Get Deeper Engineering Analysis", key=f"btn_{commentary_key}"):
+                            rec_prompt = (
+                                f"Give a deeper engineering analysis of this specific flagged KPI, beyond the "
+                                f"templated summary already shown to the operator:\n\n"
+                                f"Metric: {rec['metric']}\nCurrent: {rec['current_value']} | Target: {rec['target_value']}\n"
+                                f"Issue: {rec['issue']}\nRoot causes already listed: {'; '.join(rec['root_causes'])}\n"
+                                f"Actions already listed: {'; '.join(rec['actions'])}\n\n"
+                                f"Don't just repeat the above - add engineering nuance: which root cause is most likely "
+                                f"given the plant's other KPIs below, what to check first, and any interactions between "
+                                f"this metric and others worth flagging."
+                            )
+                            with st.spinner("Consulting the process engineer..."):
+                                reply, error = call_process_engineer(
+                                    ENGINEER_SYSTEM_PROMPT_TEMPLATE.format(context=rec_kpi_context),
+                                    [{"role": "user", "content": rec_prompt}],
+                                    engineer_api_key, engineer_model,
+                                )
+                            if error:
+                                st.error(f"Couldn't reach the AI assistant: {error}")
+                            else:
+                                st.session_state[commentary_key] = reply
+                                st.rerun()
+                elif not ANTHROPIC_AVAILABLE:
+                    pass
+                else:
+                    st.caption("💡 Add your Anthropic API key in the sidebar (🧑‍🔬 AI Process Engineer) to get a "
+                               "deeper engineering analysis of this specific issue.")
+
                 st.divider()
 
         if good_items:
@@ -2009,6 +2150,55 @@ else:
                     st.markdown(f"**{name}:** {val['value']:.2f} {val['unit']} &nbsp; {status_chip(val.get('status', ''))}", unsafe_allow_html=True)
                     if val.get('basis'):
                         st.caption(val['basis'])
+
+    # ============================================================
+    # TAB 2b: ASK AN ENGINEER (chat)
+    # ============================================================
+    with tab2b:
+        st.header("💬 Ask an Engineer")
+        st.write("A conversational assistant grounded in your plant's actual computed KPIs - ask it to interpret "
+                 "results, troubleshoot an issue, or explain what a metric means for your operation.")
+
+        if not ANTHROPIC_AVAILABLE:
+            st.warning("This feature needs the `anthropic` Python package. Add `anthropic` to requirements.txt "
+                       "and reboot the app to enable it.")
+        elif not engineer_api_key:
+            st.info("👈 Enter your Anthropic API key in the sidebar under **🧑‍🔬 AI Process Engineer** to start "
+                    "chatting. The key is only kept for this browser session - it's never saved or logged.")
+        else:
+            if "engineer_chat_history" not in st.session_state:
+                st.session_state.engineer_chat_history = []
+
+            chat_dew_kpis = kpi_calculator.calculate_dewatering_kpis()
+            chat_thick_kpis = kpi_calculator.calculate_thickening_kpis()
+            kpi_context = build_kpi_context_summary(plant_info, chat_dew_kpis, chat_thick_kpis)
+            system_prompt = ENGINEER_SYSTEM_PROMPT_TEMPLATE.format(context=kpi_context)
+
+            top_col1, top_col2 = st.columns([5, 1])
+            with top_col2:
+                if st.button("🗑️ Clear Chat", use_container_width=True):
+                    st.session_state.engineer_chat_history = []
+                    st.rerun()
+
+            for msg in st.session_state.engineer_chat_history:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+
+            user_question = st.chat_input("Ask about your dewatering/thickening performance...")
+            if user_question:
+                st.session_state.engineer_chat_history.append({"role": "user", "content": user_question})
+                with st.chat_message("user"):
+                    st.markdown(user_question)
+
+                with st.chat_message("assistant"):
+                    with st.spinner("Thinking..."):
+                        api_messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.engineer_chat_history]
+                        reply, error = call_process_engineer(system_prompt, api_messages, engineer_api_key, engineer_model)
+                    if error:
+                        st.error(f"Couldn't reach the AI assistant: {error}")
+                    else:
+                        st.markdown(reply)
+                        st.session_state.engineer_chat_history.append({"role": "assistant", "content": reply})
 
     # ============================================================
     # TAB 3: TREND / BENCHMARK ANALYSIS
