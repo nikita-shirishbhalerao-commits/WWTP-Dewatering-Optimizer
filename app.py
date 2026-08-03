@@ -17,7 +17,7 @@ except ImportError:
 # PAGE CONFIGURATION
 # ============================================================
 st.set_page_config(
-    page_title="AI Powered Thickening and Dewatering Analyzer",
+    page_title="WWTP Dewatering & Thickening Analyzer",
     page_icon="🌊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -290,7 +290,7 @@ with st.container():
         with hcol2:
             st.markdown(f"""
             <div style="padding-top:8px;">
-                <div class="hub-title-text-light">🔄 Thickening and Dewatering</div>
+                <div class="hub-title-text-light">🌊 AI-Powered WWTP Dewatering & Thickening Performance Analyzer</div>
                 <p style="color:{VEOLIA['ink_light']}; margin:0;">Fuzzy Parameter Detection | Confirm-Before-You-Analyze | Period A/B Benchmark | AI Recommendations</p>
             </div>
             """, unsafe_allow_html=True)
@@ -302,7 +302,7 @@ with st.container():
                 <div class="hub-wordmark-text">HUBGRADE</div>
             </div>
             <div class="hub-title-block">
-                <div class="hub-title-text">🔄 Thickening and Dewatering</div>
+                <div class="hub-title-text">🌊 AI-Powered WWTP Dewatering &amp; Thickening Performance Analyzer</div>
                 <div class="hub-subtitle-text">Fuzzy Parameter Detection · Confirm-Before-You-Analyze · Period A/B Benchmark · AI Recommendations</div>
             </div>
         </div>
