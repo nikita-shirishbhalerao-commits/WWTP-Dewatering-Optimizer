@@ -1,1 +1,2533 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from fuzzywuzzy import fuzz
+import warnings
+import os
+from datetime import date
+warnings.filterwarnings('ignore')
 
+try:
+    import openpyxl
+except ImportError:
+    pass
+
+# ============================================================
+# PAGE CONFIGURATION
+# ============================================================
+st.set_page_config(
+    page_title="WWTP Dewatering & Thickening Analyzer",
+    page_icon="🌊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ============================================================
+# COLOR PALETTE (Veolia brand colors, from the public 2024 graphic charter)
+# ============================================================
+VEOLIA = {
+    'red': '#FF0000',
+    'marine': '#002D62',
+    'turquoise': '#05C3DD',
+    'sky_blue': '#8DACCD',
+    'pale_blue': '#99E1EF',
+    'green': '#78BE21',
+    'forest_green': '#438D42',
+    'apricot': '#FFAC00',
+    'orange': '#FF6900',
+    'purple': '#772583',
+    'yellow': '#FFD616',
+    'pale_green': '#C1DB8A',
+    'apple_green': '#C7D64F',
+    'pale_yellow': '#FFED99',
+    'lavender': '#B092BD',
+    'white': '#FFFFFF',
+    'ink_light': '#5A6B7A',
+}
+
+# ============================================================
+# GLOBAL CSS THEME
+# ============================================================
+st.markdown(f"""
+<style>
+    .stApp {{
+        background-color: #F6F9FA;
+    }}
+    h1, h2, h3 {{
+        color: {VEOLIA['marine']} !important;
+        font-weight: 700 !important;
+    }}
+    h3 {{
+        border-bottom: 2px solid {VEOLIA['pale_blue']};
+        padding-bottom: 6px;
+    }}
+    p, div, span, label {{
+        color: {VEOLIA['marine']};
+    }}
+
+    /* --- Header banner --- */
+    .hub-header {{
+        background: linear-gradient(90deg, {VEOLIA['marine']} 0%, #003D7A 100%);
+        border-radius: 10px;
+        padding: 22px 28px;
+        margin-bottom: 22px;
+        display: flex;
+        align-items: center;
+        gap: 22px;
+        box-shadow: 0 2px 10px rgba(0,45,98,0.25);
+    }}
+    .hub-wordmark {{
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding-right: 22px;
+        border-right: 1px solid rgba(255,255,255,0.25);
+    }}
+    .hub-wordmark-dot {{
+        width: 14px; height: 14px; border-radius: 50%;
+        background: {VEOLIA['turquoise']};
+        box-shadow: 0 0 0 4px rgba(5,195,221,0.25);
+    }}
+    .hub-wordmark-text {{
+        font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
+        font-size: 22px;
+        font-weight: 800;
+        letter-spacing: 2px;
+        color: {VEOLIA['white']};
+    }}
+    .hub-title-block h1 {{
+        color: {VEOLIA['white']} !important;
+        font-size: 26px !important;
+        margin: 0 0 4px 0 !important;
+        font-weight: 700 !important;
+    }}
+    .hub-title-block p {{
+        color: {VEOLIA['pale_blue']} !important;
+        margin: 0 !important;
+        font-size: 14px !important;
+    }}
+    .hub-title-text {{
+        color: {VEOLIA['white']} !important;
+        font-size: 26px;
+        font-weight: 700;
+        margin: 0 0 4px 0;
+        line-height: 1.3;
+        font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
+    }}
+    .hub-subtitle-text {{
+        color: {VEOLIA['pale_blue']} !important;
+        margin: 0;
+        font-size: 14px;
+    }}
+    .hub-title-text-light {{
+        color: {VEOLIA['marine']} !important;
+        font-size: 26px;
+        font-weight: 700;
+        margin: 0 0 4px 0;
+        line-height: 1.3;
+        font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
+    }}
+
+    /* --- Metrics (KPI cards) --- */
+    [data-testid="stMetric"] {{
+        background: {VEOLIA['white']};
+        border: 1px solid #E1E9EE;
+        border-left: 4px solid {VEOLIA['turquoise']};
+        border-radius: 8px;
+        padding: 12px 14px 10px 14px;
+        box-shadow: 0 1px 3px rgba(0,45,98,0.06);
+        min-height: 92px;
+    }}
+    [data-testid="stMetricLabel"] {{
+        color: {VEOLIA['ink_light']} !important;
+        font-size: 11.5px !important;
+        font-weight: 600 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        line-height: 1.3 !important;
+    }}
+    [data-testid="stMetricLabel"] p {{
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        line-height: 1.3 !important;
+    }}
+    [data-testid="stMetricValue"] {{
+        color: {VEOLIA['marine']} !important;
+        font-weight: 700 !important;
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        font-size: 1.5rem !important;
+        line-height: 1.25 !important;
+    }}
+
+    /* --- Tabs --- */
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 4px;
+        border-bottom: 2px solid #E1E9EE;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        color: {VEOLIA['ink_light']};
+        font-weight: 600;
+        padding: 8px 16px;
+    }}
+    .stTabs [aria-selected="true"] {{
+        color: {VEOLIA['marine']} !important;
+        border-bottom: 3px solid {VEOLIA['turquoise']} !important;
+    }}
+
+    /* --- Buttons --- */
+    .stButton>button, .stDownloadButton>button {{
+        background-color: {VEOLIA['marine']} !important;
+        border: none !important;
+        border-radius: 6px !important;
+        font-weight: 600 !important;
+    }}
+    .stButton>button, .stButton>button *,
+    .stDownloadButton>button, .stDownloadButton>button * {{
+        color: {VEOLIA['white']} !important;
+    }}
+    .stButton>button:hover, .stDownloadButton>button:hover,
+    .stButton>button:hover *, .stDownloadButton>button:hover * {{
+        background-color: {VEOLIA['turquoise']} !important;
+        color: {VEOLIA['marine']} !important;
+    }}
+
+    /* --- Expanders --- */
+    [data-testid="stExpander"] {{
+        border: 1px solid #E1E9EE !important;
+        border-radius: 8px !important;
+        background: {VEOLIA['white']};
+    }}
+
+    /* --- Sidebar --- */
+    section[data-testid="stSidebar"] {{
+        background-color: {VEOLIA['marine']};
+    }}
+    section[data-testid="stSidebar"] * {{
+        color: {VEOLIA['white']} !important;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stExpander"] {{
+        background: rgba(255,255,255,0.06);
+        border-color: rgba(255,255,255,0.15) !important;
+    }}
+    section[data-testid="stSidebar"] input, section[data-testid="stSidebar"] textarea {{
+        color: {VEOLIA['marine']} !important;
+    }}
+    /* Uploaded-file chip: force a matched dark background + white text/icon pair so the
+       filename is never white-on-light or dark-on-dark, whatever Streamlit's default is. */
+    section[data-testid="stSidebar"] [data-testid="stFileUploaderFile"],
+    section[data-testid="stSidebar"] [data-testid="stFileUploaderFileName"] {{
+        background: rgba(255,255,255,0.14) !important;
+        border-radius: 6px;
+        padding: 4px 8px;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stFileUploaderFile"] * {{
+        color: {VEOLIA['white']} !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        white-space: normal !important;
+        word-break: break-word !important;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stFileUploaderFile"] svg {{
+        fill: {VEOLIA['white']} !important;
+    }}
+    /* Dropzone + Browse button (shown before any file is uploaded): light background,
+       so text/button must be dark navy here, not white - this is the opposite pairing
+       from the rest of the sidebar. */
+    section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {{
+        background: {VEOLIA['white']} !important;
+        border: 2px dashed rgba(255,255,255,0.4);
+        border-radius: 8px;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] * {{
+        color: {VEOLIA['marine']} !important;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button {{
+        background: {VEOLIA['turquoise']} !important;
+        color: {VEOLIA['marine']} !important;
+        border: none !important;
+        font-weight: 600 !important;
+    }}
+
+    /* --- Dataframes --- */
+    [data-testid="stDataFrame"] {{
+        border: 1px solid #E1E9EE;
+        border-radius: 6px;
+    }}
+
+    /* --- Dividers --- */
+    hr {{
+        border-top: 1px solid #E1E9EE !important;
+    }}
+
+    /* --- Status chips --- */
+    .status-chip {{
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 12px;
+        font-size: 12.5px;
+        font-weight: 700;
+    }}
+</style>
+""", unsafe_allow_html=True)
+
+# ============================================================
+# HEADER BANNER (Hubgrade wordmark + app title)
+# ============================================================
+_logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hubgrade_logo.png") if '__file__' in dir() else "hubgrade_logo.png"
+
+with st.container():
+    if os.path.exists(_logo_path):
+        hcol1, hcol2 = st.columns([1, 5])
+        with hcol1:
+            st.image(_logo_path, width=140)
+        with hcol2:
+            st.markdown(f"""
+            <div style="padding-top:8px;">
+                <div class="hub-title-text-light">🌊 AI-Powered WWTP Dewatering & Thickening Performance Analyzer</div>
+                <p style="color:{VEOLIA['ink_light']}; margin:0;">Fuzzy Parameter Detection | Confirm-Before-You-Analyze | Period A/B Benchmark | AI Recommendations</p>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div class="hub-header">
+            <div class="hub-wordmark">
+                <div class="hub-wordmark-dot"></div>
+                <div class="hub-wordmark-text">HUBGRADE</div>
+            </div>
+            <div class="hub-title-block">
+                <div class="hub-title-text">🌊 AI-Powered WWTP Dewatering &amp; Thickening Performance Analyzer</div>
+                <div class="hub-subtitle-text">Fuzzy Parameter Detection · Confirm-Before-You-Analyze · Period A/B Benchmark · AI Recommendations</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+# Passed to every st.plotly_chart() call so each chart gets a working "download as PNG" button
+# in its toolbar, with a higher-res export than the default.
+PLOTLY_CONFIG = {
+    'displaylogo': False,
+    'toImageButtonOptions': {'format': 'png', 'scale': 2, 'filename': 'chart'},
+    'modeBarButtonsToAdd': ['toImage'],
+}
+
+
+def render_chart_with_download(fig, key):
+    """Render a Plotly chart, plus an explicit download button under its bottom-right corner
+    (in addition to the toolbar's built-in camera icon). Tries a PNG export first (needs the
+    'kaleido' package, and kaleido>=1.0 also needs a separately-installed Chrome browser); if
+    that fails for any reason, falls back to an interactive HTML download instead of breaking
+    the app, and shows the actual error so the real cause is diagnosable rather than guessed at."""
+    st.plotly_chart(fig, use_container_width=True, key=key, config=PLOTLY_CONFIG)
+    spacer, dl_col = st.columns([6, 1])
+    with dl_col:
+        try:
+            img_bytes = fig.to_image(format="png", scale=2)
+            st.download_button("⬇️ Download Chart", data=img_bytes, file_name=f"{key}.png", mime="image/png",
+                                key=f"dl_{key}", use_container_width=True, help="Download this chart as a PNG image.")
+        except Exception as e:
+            html_bytes = fig.to_html(full_html=True, include_plotlyjs='cdn').encode('utf-8')
+            st.download_button("⬇️ Download Chart", data=html_bytes, file_name=f"{key}.html", mime="text/html",
+                                key=f"dl_{key}", use_container_width=True,
+                                help=f"PNG export failed, downloading an interactive HTML chart instead. Reason: {e}")
+            with st.expander("Why HTML instead of PNG?", expanded=False):
+                st.caption(f"PNG export error: `{e}`")
+                st.caption("Most common cause: kaleido>=1.0 dropped its bundled Chromium and now needs a separate "
+                           "browser install. Fix: pin `kaleido==0.2.1` in requirements.txt (last version with a "
+                           "bundled headless browser, no extra install step needed) and redeploy/reboot the app.")
+
+
+def status_chip(status_text):
+    """Render a KPI/recommendation status string as a colored chip matching the Veolia palette,
+    without changing the underlying text the rest of the app string-matches on."""
+    if not status_text:
+        return ""
+    if 'On Target' in status_text or '✅' in status_text:
+        bg, fg = '#EAF4DD', VEOLIA['forest_green']
+    elif 'Below Target' in status_text or '🔴' in status_text:
+        bg, fg = '#FFE3E3', VEOLIA['red']
+    elif 'Above Target' in status_text or '🟠' in status_text:
+        bg, fg = '#FFEFD9', VEOLIA['orange']
+    elif 'Informational' in status_text or 'ℹ️' in status_text:
+        bg, fg = '#E7F2F8', VEOLIA['marine']
+    else:
+        bg, fg = '#EEF3F6', VEOLIA['ink_light']
+    label = status_text.replace('✅', '').replace('🔴', '').replace('🟠', '').replace('ℹ️', '').strip()
+    return f'<span class="status-chip" style="background:{bg}; color:{fg};">{label}</span>'
+
+
+def priority_chip(priority_text):
+    """Render a recommendation priority (CRITICAL/HIGH/MEDIUM/OPTIMAL) as a colored chip."""
+    if 'CRITICAL' in priority_text:
+        bg, fg = '#FFE3E3', VEOLIA['red']
+    elif 'HIGH' in priority_text:
+        bg, fg = '#FFEFD9', VEOLIA['orange']
+    elif 'MEDIUM' in priority_text:
+        bg, fg = '#FFF7DB', '#9A7B00'
+    elif 'OPTIMAL' in priority_text:
+        bg, fg = '#EAF4DD', VEOLIA['forest_green']
+    else:
+        bg, fg = '#EEF3F6', VEOLIA['ink_light']
+    label = priority_text.replace('🔴', '').replace('🟠', '').replace('🟡', '').replace('✅', '').strip()
+    return f'<span class="status-chip" style="background:{bg}; color:{fg};">{label}</span>'
+
+
+# ============================================================
+# PERFORMANCE THRESHOLDS (used for chart footnotes + ratings)
+# ============================================================
+PERFORMANCE_THRESHOLDS = {
+    'polymer': {'excellent': (0, 12), 'good': (12, 15), 'moderate': (15, 18), 'poor': (18, float('inf'))},
+    'cake_quality': {'excellent': (25, float('inf')), 'good': (20, 25), 'moderate': (15, 20), 'poor': (0, 15)},
+    'dry_wet_ratio': {'excellent': (0.25, float('inf')), 'good': (0.20, 0.25), 'moderate': (0.15, 0.20), 'poor': (0, 0.15)},
+    'thickener_underflow': {'excellent': (5, float('inf')), 'good': (3, 5), 'moderate': (2, 3), 'poor': (0, 2)},
+    'thickener_overflow': {'excellent': (0, 500), 'good': (500, 1000), 'moderate': (1000, 1500), 'poor': (1500, float('inf'))},
+    'gbt_underflow': {'excellent': (8, float('inf')), 'good': (5, 8), 'moderate': (3, 5), 'poor': (0, 3)},
+    'gbt_overflow': {'excellent': (0, 300), 'good': (300, 500), 'moderate': (500, 800), 'poor': (800, float('inf'))},
+}
+
+
+def format_threshold_footnote(metric_key, unit=""):
+    if metric_key not in PERFORMANCE_THRESHOLDS:
+        return None
+    thresholds = PERFORMANCE_THRESHOLDS[metric_key]
+    order = ['excellent', 'good', 'moderate', 'poor']
+    icons = {'excellent': '🟢', 'good': '🟡', 'moderate': '🟠', 'poor': '🔴'}
+    parts = []
+    for level in order:
+        lo, hi = thresholds[level]
+        if lo == 0:
+            text = f"<{hi:g}{unit}"
+        elif hi == float('inf'):
+            text = f"≥{lo:g}{unit}"
+        else:
+            text = f"{lo:g}–{hi:g}{unit}"
+        parts.append(f"{icons[level]} **{level.title()}**: {text}")
+    return " &nbsp;|&nbsp; ".join(parts)
+
+
+def render_footnote(metric_key, unit="", fallback=None):
+    txt = format_threshold_footnote(metric_key, unit)
+    if txt:
+        st.caption(f"📊 Performance benchmark — {txt}")
+    elif fallback:
+        st.caption(fallback)
+
+
+# ============================================================
+# KPI DEFINITIONS
+# ============================================================
+DEWATERING_KPI_DEFINITIONS = {
+    'cake_solids': {'name': 'Cake Solids Content (%)', 'description': 'Dry solids percentage in dewatered biosolids. Target varies by equipment: 18-25% belt press, 20-30% centrifuge.'},
+    'cake_moisture': {'name': 'Cake Moisture Content (%)', 'description': 'Inverse of cake solids content.'},
+    'dry_wet_ratio': {'name': 'Dry/Wet Ratio', 'description': 'Dry solids produced relative to total wet cake mass hauled - a direct measure of dewatering efficiency.'},
+    'active_polymer_dose': {'name': 'Active Polymer Dose (lbs active/ton DS)', 'description': 'Conditioning chemical usage per ton of dry solids, on an active (post-dilution/activity-adjusted) basis. This is the standard basis for the 5-15 lbs/ton benchmark.'},
+    'raw_polymer_dose': {'name': 'Raw/Neat Polymer Dose (lbs product/ton DS)', 'description': 'As-delivered product dose per ton of dry solids, before adjusting for % activity. Varies by product concentration, so no universal benchmark applies.'},
+    'polymer_activity_pct': {'name': 'Polymer Product Activity (%)', 'description': 'Active dose ÷ raw/neat dose. A rough check on whether your active-basis dose lines up with the product spec sheet.'},
+    'polymer_cost_per_lb': {'name': 'Polymer Cost per Pound of Solids ($/lb DS)', 'description': 'Economic indicator of chemical efficiency.'},
+    'dewatering_throughput': {'name': 'Dewatering Throughput (lbs DS/day)', 'description': 'Daily dry solids processing capacity.'},
+    'cake_production_rate': {'name': 'Cake Production Rate (lbs/hour)', 'description': 'Dewatered biosolids output rate.'},
+    'dewatering_feed_rate': {'name': 'Dewatering Feed Rate (gpm)', 'description': 'Sludge feed flow into the dewatering equipment.'},
+    'filtrate_turbidity': {'name': 'Filtrate Clarity', 'description': 'Clarity of return liquor/centrate. Lower = better solids capture. Rating only applied if a recognizable NTU or mg/L unit was detected.'},
+    'filtrate_flow_rate': {'name': 'Filtrate Flow Rate (gpm)', 'description': 'Return liquor flow rate from dewatering.'},
+    'solids_recovery': {'name': 'Solids Recovery Rate (%)', 'description': 'Percentage of incoming solids captured in cake vs. lost to recycle stream.'},
+    'hauling_cost_per_wet_ton': {'name': 'Hauling Cost per Wet Ton ($/wet ton)', 'description': 'Disposal/hauling economics normalized per wet ton of cake.'},
+    'equipment_availability': {'name': 'Dewatering Equipment Availability (%)', 'description': 'Uptime percentage of dewatering equipment.'},
+}
+
+THICKENING_KPI_DEFINITIONS = {
+    'thickened_solids': {'name': 'Thickened Solids Concentration (%)', 'description': 'Dry solids percentage achieved. Target 4-8% gravity, 6-12% DAF.'},
+    'underflow_lbs_gal': {'name': 'Underflow Solids Concentration (lbs DS/gal)', 'description': 'Underflow solids expressed as mass per gallon; higher = less downstream load.'},
+    'feed_solids_concentration': {'name': 'Feed Solids Concentration (%)', 'description': 'Incoming sludge solids strength ahead of thickening - useful context for interpreting the other thickening KPIs.'},
+    'overflow_turbidity': {'name': 'Overflow Clarity', 'description': 'Clarified supernatant quality. Lower = better solids separation. Rating only applied if a recognizable NTU or mg/L unit was detected.'},
+    'thickening_throughput': {'name': 'Thickening Throughput (lbs DS/day)', 'description': 'Estimated daily solids processing capacity.'},
+    'underflow_production_rate': {'name': 'Underflow Production Rate (lbs/hour)', 'description': 'Thickened sludge output rate.'},
+    'overflow_flow_rate': {'name': 'Overflow Flow Rate (gpm)', 'description': 'Return liquor flow rate from thickening.'},
+    'hydraulic_loading_rate': {'name': 'Hydraulic Loading Rate (gpd/sq ft)', 'description': 'Feed flow relative to thickener surface area - a standard design/operating check alongside solids loading.'},
+    'solids_loading_rate': {'name': 'Solids Loading Rate (lbs DS/day/sq ft)', 'description': 'Thickener surface-area efficiency.'},
+    'retention_time': {'name': 'Retention Time (hours)', 'description': 'Tank volume ÷ feed flow. Applies to gravity thickeners (tank-based); not meaningful for GBTs, which are continuous mechanical units.'},
+    'thickening_polymer_dose': {'name': 'Thickening Polymer Dose (lbs active/ton DS)', 'description': 'Conditioning polymer usage per ton of dry solids. Only rated against a target when the confirmed column (or dry-tons normalization) actually represents a per-ton dose - see the calculation basis on each recommendation for exactly how this was derived for your data.'},
+    'thickening_polymer_total': {'name': 'Total Thickening Polymer Usage', 'description': 'Raw polymer mass or volume used per day, reported as-is when there isn\'t enough data (e.g. no dry-tons figure) to normalize it into a per-ton dose.'},
+    'thickening_polymer_unit_cost': {'name': 'Thickening Polymer Unit Cost ($/lb product)', 'description': 'Polymer cost ÷ polymer mass purchased - a straightforward economic check that doesn\'t require any throughput data.'},
+    'daf_air_to_solids_ratio': {'name': 'DAF Air-to-Solids Ratio', 'description': 'Applies only to DAF thickeners. Requires calibrated air mass flow and solids mass flow instrumentation most spreadsheets don\'t log, so this is usually reported as insufficient data rather than guessed at.'},
+    'solids_capture_efficiency': {'name': 'Solids Capture Efficiency (%)', 'description': 'Percentage of incoming solids retained in thickened sludge.'},
+    'rake_torque_monitor': {'name': 'Rake Torque (Nm)', 'description': 'Gravity thickener rake drive torque. Rising trend can indicate rag/solids buildup - compare against the manufacturer-rated limit.'},
+    'belt_speed_monitor': {'name': 'GBT Belt Speed', 'description': 'Gravity belt thickener belt speed trend - useful context alongside underflow/overflow quality.'},
+    'thickening_equipment_availability': {'name': 'Thickening Equipment Availability (%)', 'description': 'Uptime percentage of thickening equipment.'},
+}
+
+# ============================================================
+# RECOMMENDATION TEMPLATES + PRIORITY MAP
+# ============================================================
+RECOMMENDATION_TEMPLATES = {
+    'cake_solids': {
+        'issue': 'Cake solids content reflects how well polymer-conditioned floc resists shear and releases free water under '
+                 'mechanical/pressure dewatering. A shortfall usually traces to floc structure (under/overdose, wrong charge '
+                 'density or molecular weight) or to mechanical energy input exceeding what the conditioned floc can withstand '
+                 '(differential speed/G-force too high for BFP belt tension, or centrifuge bowl speed shearing floc faster than '
+                 'it can compact).',
+        'root_causes': [
+            'Polymer underdosed relative to sludge charge demand (check against CST or jar-test optimum, not just historical dose)',
+            'Polymer overdosed - excess cationic charge re-stabilizes fine particles and can paradoxically reduce capture and cake dryness',
+            'Wrong polymer charge density/molecular weight for current feed (WAS-heavy blends typically need higher charge density than primary-heavy blends)',
+            'Centrifuge differential speed or bowl speed too high, shearing floc before it compacts in the cake zone',
+            'BFP belt tension/pressure zone speed mismatched to floc strength, causing washout in the wedge zone',
+            'Feed solids concentration or VS% has drifted (higher VS% sludge is generally harder to dewater and needs more polymer per ton)',
+            'Scroll/bowl wear increasing differential, or belt wear reducing effective pressure zone dwell time',
+        ],
+        'actions': [
+            'Run a fresh jar test (or bench CST test) to re-establish optimum polymer type and dose against *current* sludge, not last year\'s',
+            'If polymer dose is already at or above target range with poor cake, suspect overdose/wrong product before adding more - try a controlled dose reduction of 10-15% and watch cake solids response',
+            'Step differential speed (centrifuge) or belt speed (BFP) in small increments (2-5%) and hold each step 30-60 min before reading cake solids, to isolate the mechanical vs. chemical contribution',
+            'Pull a feed sample for %TS and VS% if not already tracked - a VS% shift explains dose creep that polymer changes alone won\'t fix',
+            'Inspect scroll tip/bowl wear (centrifuge) or belt/roller wear (BFP) if the trend is a slow multi-month decline rather than a step change',
+        ],
+        'additional_data': ['Feed sludge %TS and VS%', 'Equipment differential speed/torque or belt tension logs', 'Polymer type, charge density, and dilution ratio', 'CST or jar-test bench results'],
+        'timeline': '1-2 weeks', 'risk': 'Low - improves operation',
+    },
+    'dry_wet_ratio': {
+        'issue': 'Dry/wet ratio is a direct proxy for cake solids - it moves in lockstep because both are driven by the same '
+                 'floc-strength and mechanical-energy factors. A low ratio means more truck volume and tip fees per ton of dry '
+                 'solids actually captured.',
+        'root_causes': ['Cake solids content too low (this is mathematically the same driver, see the Cake Solids diagnosis)', 'Polymer dose/type not optimized for current sludge', 'Equipment speed or feed rate mismatched to floc characteristics'],
+        'actions': ['Treat this and Cake Solids as one diagnosis - fixing cake solids fixes this ratio directly', 'Re-run a polymer jar test against current sludge', 'Review differential speed/belt speed settings against feed rate'],
+        'additional_data': ['See Cake Solids KPI'],
+        'timeline': '1-2 weeks', 'risk': 'Low',
+    },
+    'active_polymer_dose': {
+        'issue': 'Active polymer dose above the efficient range (5-15 lbs active/ton DS) usually means the floc-forming reaction '
+                 'is running less efficiently than it should - either the polymer/sludge chemistry mismatch, insufficient mixing '
+                 'energy to fully react the polymer before shear, or a genuine increase in the sludge\'s specific charge demand.',
+        'root_causes': [
+            'Bowl/belt speed too high, shearing floc and forcing operators to compensate with more polymer',
+            'Feed rate exceeds the flocculation contact time the conditioning system was sized for',
+            'Polymer emulsion not fully inverted/activated before contacting sludge (check activation/aging tank residence time and mixing energy)',
+            'Polymer type/charge density mismatched to current sludge blend (WAS fraction, digestion type, or industrial contribution change)',
+            'Equipment wear increasing shear (worn scroll tips, bearing play) or reducing effective mixing (worn static mixer, degraded injection ring)',
+            'Sludge VS% or feed solids concentration trending up, increasing specific surface area and charge demand per ton',
+        ],
+        'actions': [
+            'Conduct a polymer jar test across 2-3 competing products/charge densities, not just re-testing the incumbent product at different doses',
+            'Verify polymer activation: check make-down water temperature, aging tank residence time (typically 20-30 min for emulsion products), and mixing energy - under-activated polymer needs more product to get the same effective charge',
+            'Reduce differential/belt speed 5% and hold 30-60 min to see if dose can drop without sacrificing cake solids - shear-driven overdosing is common and easy to miss',
+            'Pull feed %TS/VS% data; if VS% has risen, the dose increase may be a legitimate response to harder-to-dewater sludge, not an equipment problem',
+            'Inspect polymer injection point and static mixer for scale buildup or wear reducing mixing efficiency',
+        ],
+        'additional_data': ['Sludge %TS and VS%', 'Equipment RPM/belt speed and torque trend', 'Polymer type, active content, and activation/aging tank residence time'],
+        'timeline': '1-2 weeks', 'risk': 'Medium - monitor cake quality while adjusting',
+    },
+    'filtrate_turbidity': {
+        'issue': 'Filtrate/centrate clarity is a real-time capture-efficiency signal - it responds faster than cake solids to '
+                 'dosing and mechanical changes because it reflects fines that never flocculated into capturable floc, rather than '
+                 'the compaction behavior of floc that did form.',
+        'root_causes': [
+            'Polymer underdosed - insufficient charge neutralization leaves fine colloidal solids unflocculated and free to pass through',
+            'Feed rate spikes exceeding the flocculation/capture capacity of the equipment (check for feed rate variability, not just the daily average)',
+            'Screen, bowl, or belt wear creating a physical bypass path independent of floc quality',
+            'Polymer not fully mixed before the sludge reaches the dewatering zone - insufficient residence time between injection and the machine',
+            'Fine/colloidal fraction of the feed has increased (e.g. a shift toward more WAS or a plant upset upstream)',
+        ],
+        'actions': [
+            'Increase polymer dose in small (~5%) increments and track turbidity response - a rapid improvement confirms underdosing rather than a mechanical bypass',
+            'Check polymer injection point placement and static mixer condition; confirm adequate contact time before the machine (typically several seconds minimum for full flocculation)',
+            'Inspect screens, bowl, or belt for wear that could allow physical bypass regardless of floc quality',
+            'If turbidity persists despite adequate dose and good cake solids, suspect mechanical bypass over chemistry and prioritize equipment inspection',
+            'Review feed rate variability (not just average) - short-duration feed spikes can blow through floc capacity even when average dose looks adequate',
+        ],
+        'additional_data': ['Polymer mixing energy/injection point details and residence time to machine', 'Screen/bowl/belt inspection records', 'Feed rate variability (min/max, not just average)'],
+        'timeline': '1-2 weeks', 'risk': 'Low',
+    },
+    'solids_recovery': {
+        'issue': 'Solids recovery is the mass-balance complement to filtrate clarity - it quantifies how much dry solids mass is '
+                 'actually being lost to the recycle stream rather than captured in cake. Below ~95% recovery represents both a '
+                 'direct solids-handling cost and a recycle load back onto liquid treatment.',
+        'root_causes': ['Polymer dose insufficient for the current floc-formation demand', 'Feed rate exceeds equipment hydraulic/solids capacity', 'Equipment wear allowing bypass', 'Poor polymer-sludge mixing reducing effective floc formation'],
+        'actions': ['Increase polymer dose incrementally while tracking recovery, not just cake solids - dose changes can improve one without the other', 'Reduce feed/throughput rate if consistently near rated capacity', 'Inspect equipment for wear allowing solids bypass', 'Optimize polymer mixing energy/injection point'],
+        'additional_data': ['Feed solids loading data', 'Recycle stream solids concentration'],
+        'timeline': '2-3 weeks', 'risk': 'Low',
+    },
+    'cake_production_rate': {
+        'issue': 'Cake production rate outside the typical operating band for this equipment class usually reflects a feed-rate/design-capacity mismatch rather than a chemistry problem.',
+        'root_causes': ['Feed rate mismatched to equipment design capacity', 'Equipment running below/above rated throughput'],
+        'actions': ['Review feed rate against equipment design specs (nameplate capacity, not just historical operating point)', 'Evaluate whether an additional train needs to be brought online if consistently running above rated capacity'],
+        'additional_data': ['Equipment design capacity/rated throughput'],
+        'timeline': 'Ongoing', 'risk': 'Low',
+    },
+    'equipment_availability': {
+        'issue': 'Dewatering equipment uptime below ~90% risks capacity shortfalls during peak solids loading and forces reliance '
+                 'on fewer trains running harder, which itself tends to push cake quality and polymer efficiency in the wrong direction.',
+        'root_causes': ['Unplanned downtime/maintenance events', 'Recurring mechanical failure mode (bearing, seal, scroll wear) not yet root-caused', 'Insufficient redundancy/backup units for planned maintenance windows'],
+        'actions': ['Pull maintenance work order history and categorize downtime by cause code to find the dominant failure mode, not just total hours down', 'Evaluate whether preventive maintenance intervals match actual wear rates (e.g. scroll/bowl inspection frequency vs. observed wear)', 'Assess spare parts inventory and backup equipment availability for the dominant failure mode identified'],
+        'additional_data': ['Maintenance work order history with downtime cause codes', 'Vibration/wear trend data if available'],
+        'timeline': '4-8 weeks', 'risk': 'Medium - reliability risk',
+    },
+    'cake_moisture': {
+        'issue': 'Cake moisture is mathematically the inverse of cake solids, driven by the same floc-strength and mechanical-energy factors.',
+        'root_causes': ['Same drivers as Cake Solids (inverse relationship): polymer dose/type, equipment speed, feed rate'],
+        'actions': ['Treat as the same diagnosis as Cake Solids - improving cake solids improves moisture directly'],
+        'additional_data': ['See Cake Solids KPI'],
+        'timeline': '1-2 weeks', 'risk': 'Low',
+    },
+    'polymer_cost_per_lb': {
+        'issue': 'Polymer cost per pound of dry solids is an economic KPI that can be elevated by dose (a process problem) or by '
+                 'unit price (a procurement problem) - these need different fixes, so check which one is driving it before acting.',
+        'root_causes': ['Polymer dose too high for sludge characteristics (see Active Polymer Dose diagnosis)', 'Polymer unit price above current market rate for the product class/volume tier', 'Inefficient mixing requiring higher dose to achieve the same effective charge'],
+        'actions': ['First check whether Active Polymer Dose is also flagged - if so, fix dose/chemistry first since cost will follow', 'If dose is on-target but cost per lb is still high, benchmark unit price against 2-3 competing suppliers for the same product class', 'Improve polymer mixing/activation efficiency to lower the dose needed for equivalent performance'],
+        'additional_data': ['Polymer contract pricing and volume tier', 'Vendor jar test results from competing products'],
+        'timeline': '4-6 weeks', 'risk': 'Low',
+    },
+    'thickened_solids': {
+        'issue': 'Thickened solids concentration below target increases hydraulic and solids loading onto downstream dewatering, '
+                 'effectively pushing the thickening problem downstream rather than solving it. The underlying mechanism is the '
+                 'same floc-settling/compaction physics as dewatering, just at a lower solids/higher water fraction.',
+        'root_causes': ['Insufficient retention time for gravity settling/compaction to complete', 'Feed rate too high relative to thickener design (hydraulic or solids loading rate)', 'Poor polymer conditioning ahead of thickening (if polymer is used)', 'Rake/belt mechanism issues disrupting the settled blanket or belt cake', 'Sludge is inherently difficult to thicken (e.g. bulking, high VS%, or septic conditions)'],
+        'actions': ['Reduce feed rate to the thickener and confirm against Hydraulic/Solids Loading Rate KPIs whether it\'s within design range', 'Increase retention time if operationally possible (lower feed rate or bring a parallel unit online)', 'Optimize polymer dose specifically for thickening if used - this is often a different dose/product than dewatering polymer', 'Inspect rake mechanism (gravity) or belt/roller condition (GBT) for mechanical disruption of the settling/thickening process'],
+        'additional_data': ['Thickener feed rate and calculated retention time', 'Polymer dose used ahead of thickening', 'Sludge blanket depth/interface if gravity thickener'],
+        'timeline': '1-2 weeks', 'risk': 'Low',
+    },
+    'overflow_turbidity': {
+        'issue': 'Thickener/GBT overflow quality degradation is the thickening-stage analog of dewatering filtrate turbidity - '
+                 'solids escaping capture rather than settling/compacting into the underflow.',
+        'root_causes': ['Feed rate too high, exceeding settling/capture capacity', 'Polymer underdosed ahead of thickening (if used)', 'Screen/mesh wear on GBT allowing bypass', 'Rake speed too high on gravity thickener, resuspending settled solids'],
+        'actions': ['Reduce feed rate', 'Increase polymer dose incrementally if used ahead of thickening', 'Inspect belt/screen for wear (GBT) allowing physical bypass', 'Reduce rake speed (gravity thickener) if resuspension is suspected'],
+        'additional_data': ['Overflow flow rate', 'Polymer dose ahead of thickening'],
+        'timeline': '1-2 weeks', 'risk': 'Low',
+    },
+    'underflow_production_rate': {
+        'issue': 'Underflow production rate outside the typical range usually reflects a feed-rate/design-capacity mismatch, similar to dewatering cake production rate.',
+        'root_causes': ['Feed rate mismatched to equipment design capacity', 'Underflow concentration lower/higher than expected, changing the mass balance at a given feed rate'],
+        'actions': ['Review feed rate against thickener design capacity', 'Re-evaluate underflow concentration targets against the Thickened Solids KPI - if that\'s also flagged, fix it first'],
+        'additional_data': ['Thickener design capacity'],
+        'timeline': 'Ongoing', 'risk': 'Low',
+    },
+    'hydraulic_loading_rate': {
+        'issue': 'Hydraulic loading rate (feed flow per unit surface area) is a core gravity-settling design parameter - running '
+                 'above the design range reduces the time solids have to settle before overflow, directly degrading both underflow '
+                 'concentration and overflow clarity.',
+        'root_causes': ['Feed flow too high relative to available surface area', 'Flow not evenly distributed across multiple parallel units if present, overloading one while others run under capacity'],
+        'actions': ['Review feed flow against thickener design hydraulic capacity (typical gravity thickener design range is 400-800 gpd/sq ft)', 'Balance flow across parallel units if available - check for uneven distribution rather than assuming total flow is the only variable', 'Confirm the surface area entered in Plant Information matches actual as-built dimensions, not nameplate/nominal'],
+        'additional_data': ['Thickener design hydraulic capacity', 'Flow split data if multiple parallel units'],
+        'timeline': '2-4 weeks', 'risk': 'Low',
+    },
+    'solids_loading_rate': {
+        'issue': 'Solids loading rate (mass of dry solids applied per unit surface area per day) is the complementary design '
+                 'parameter to hydraulic loading - even at acceptable flow, a high-solids-concentration feed can overload the '
+                 'settling capacity of the same surface area.',
+        'root_causes': ['Feed rate too high relative to available surface area', 'Underflow concentration lower than expected, meaning more volume/mass is passing through per unit of captured solids'],
+        'actions': ['Reduce feed rate or distribute flow across additional units if available', 'Investigate ways to increase underflow concentration (see Thickened Solids diagnosis) since that improves this ratio directly', 'Cross-check against Hydraulic Loading Rate - if both are flagged together, this is a capacity problem; if only solids loading is flagged, suspect feed solids concentration has increased'],
+        'additional_data': ['Confirm thickener surface area entered in Plant Information matches as-built'],
+        'timeline': '2-4 weeks', 'risk': 'Low',
+    },
+    'retention_time': {
+        'issue': 'Retention time below the typical gravity thickener design range (18-24+ hours) limits the time available for '
+                 'gravity settling and compaction, capping the achievable underflow concentration regardless of polymer or feed quality.',
+        'root_causes': ['Feed flow too high for the tank volume', 'Tank volume entered in Plant Information may not reflect actual operating volume (e.g. sludge blanket occupying part of the tank, or side-water-depth different than assumed)'],
+        'actions': ['Reduce feed rate if operationally possible', 'Verify the tank volume entered in Plant Information against as-built drawings, not assumed nominal capacity', 'Consider distributing flow to additional parallel units if available rather than running one unit past its retention design'],
+        'additional_data': ['Actual operating sludge blanket depth/volume', 'As-built tank dimensions and side-water depth'],
+        'timeline': '2-4 weeks', 'risk': 'Low',
+    },
+    'thickening_polymer_dose': {
+        'issue': 'Thickening polymer consumption above the typical 2-6 lbs active/ton DS range for GBT/gravity thickening usually '
+                 'points to the same chemistry-vs-mechanics questions as dewatering polymer, but note thickening polymer selection '
+                 'often differs from dewatering polymer (different charge density/molecular weight optimum for a lower-solids feed).',
+        'root_causes': ['Polymer dose/product not optimized for current sludge characteristics at the thickening solids range (which differs from dewatering feed characteristics)', 'Poor mixing efficiency at the injection point ahead of the thickener', 'Feed rate too high, forcing operators to compensate with more polymer to maintain capture'],
+        'actions': ['Run a polymer jar test specifically at thickening-stage solids concentration - don\'t assume the dewatering-optimized product/dose transfers directly', 'Improve polymer mixing/injection point ahead of the thickener', 'Review feed rate against thickener capacity before assuming a pure chemistry problem'],
+        'additional_data': ['Sludge characteristics ahead of thickening (feed %TS)', 'Polymer product/charge density used for thickening vs. dewatering'],
+        'timeline': '1-2 weeks', 'risk': 'Low',
+    },
+    'thickening_equipment_availability': {
+        'issue': 'Thickening equipment uptime below ~92% risks capacity shortfalls that cascade downstream onto dewatering, since '
+                 'thickening is upstream in the solids handling train.',
+        'root_causes': ['Unplanned downtime/maintenance events', 'Recurring mechanical failure mode not yet root-caused'],
+        'actions': ['Pull maintenance work order history and categorize by cause code to identify the dominant failure mode', 'Evaluate preventive maintenance schedule against actual wear rates observed'],
+        'additional_data': ['Maintenance work order history with downtime cause codes'],
+        'timeline': '4-8 weeks', 'risk': 'Medium - reliability risk',
+    },
+}
+
+PRIORITY_MAP = {
+    'cake_solids': '🔴 CRITICAL', 'dry_wet_ratio': '🟡 MEDIUM', 'active_polymer_dose': '🟠 HIGH',
+    'filtrate_turbidity': '🟡 MEDIUM', 'solids_recovery': '🟠 HIGH', 'cake_production_rate': '🟡 MEDIUM',
+    'equipment_availability': '🟠 HIGH', 'cake_moisture': '🟡 MEDIUM', 'polymer_cost_per_lb': '🟡 MEDIUM',
+    'thickened_solids': '🟠 HIGH', 'overflow_turbidity': '🟡 MEDIUM', 'underflow_production_rate': '🟡 MEDIUM',
+    'hydraulic_loading_rate': '🟡 MEDIUM', 'solids_loading_rate': '🟡 MEDIUM', 'retention_time': '🟡 MEDIUM',
+    'thickening_polymer_dose': '🟡 MEDIUM', 'thickening_equipment_availability': '🟠 HIGH',
+}
+
+# ============================================================
+# PARAMETER KEYWORDS (module-level, shared by every file loaded)
+# ============================================================
+PARAMETER_KEYWORDS = {
+    'polymer': ['act poly dry ton', 'lbs act poly dry ton', 'active polymer dry ton', 'polymer dose lbs ton',
+                'active poly lbs per dt', 'centrifuge act poly dry ton', 'active polymer', 'polymer dose', 'poly dose lbs/ton'],
+    'polymer_raw': ['raw polymer dry ton', 'neat poly dry ton', 'raw poly per dry ton', 'neat polymer dry ton', 'raw polymer product dose', 'neat poly/dry ton'],
+    'polymer_gpd': ['polymer gpd feed rate', 'polymer feed gpd', 'raw polymer gpd', 'polymer solution gpd'],
+    'cake_quality': ['cake solids', 'cake percent', 'cake quality', 'percent solids cake', 'dewatered solids', 'cake ts', 'cake dry solids', 'cake avg'],
+    'centrifuge_1_hours': ['centrifuge 1 hours', 'c1 run hours', 'centrifuge 1 runtime'],
+    'centrifuge_2_hours': ['centrifuge 2 hours', 'c2 run hours', 'centrifuge 2 runtime'],
+    'centrifuge_3_hours': ['centrifuge 3 hours', 'c3 run hours', 'centrifuge 3 runtime'],
+    'bfp_hours': ['bfp hours', 'belt filter press hours', 'belt press run hours'],
+    'rotary_press_hours': ['rotary press hours', 'rotary press runtime'],
+    'dry_tons': ['dry tons', 'dry ton', 'dry solids tons', 'dry solids produced', 'tons dry solids'],
+    'wet_tons': ['wet tons', 'wet ton', 'wet cake tons', 'cake wet tons'],
+    'trucks': ['sludge trucks', 'daily trucks', 'truck count', 'number of trucks', 'haul trucks'],
+    'influent_flow': ['influent flow', 'plant influent', 'inflow mgd', 'influent mgd'],
+    'effluent_flow': ['effluent flow', 'plant effluent', 'outflow mgd', 'effluent mgd'],
+    'filtrate_turbidity': ['filtrate turbidity ntu', 'centrate turbidity ntu', 'filtrate ntu', 'centrate ntu'],
+    'filtrate_flow': ['filtrate flow gpm', 'centrate flow gpm', 'filtrate gpm', 'centrate gpm', 'return flow dewatering'],
+    'dewatering_feed': ['centrifuge feed gpm', 'dewatering feed rate', 'feed rate to centrifuge', 'bfp feed gpm', 'dewatering influent flow'],
+    'feed_solids': ['feed solids percent', 'influent solids concentration', 'feed ts percent', 'raw sludge solids percent'],
+    'thickener_feed': ['thickener feed gpm', 'gravity thickener feed', 'thickener inlet flow', 'feed rate gpm'],
+    'thickener_underflow': ['thickener underflow percent', 'gravity thickener underflow', 'underflow ts', 'underflow solids', 'thickener underflow solids'],
+    'thickener_overflow': ['thickener overflow tss', 'gravity thickener overflow', 'overflow tss', 'overflow turbidity ntu', 'thickener overflow tss'],
+    'thickener_torque': ['thickener torque', 'rake torque', 'thickener rake torque'],
+    'gbt_feed': ['gbt feed gpm', 'gravity belt thickener feed', 'belt thickener feed rate'],
+    'gbt_underflow': ['gbt underflow percent', 'gravity belt thickener underflow', 'belt thickener underflow solids'],
+    'gbt_overflow': ['gbt overflow tss', 'gravity belt thickener overflow', 'belt thickener overflow tss'],
+    'gbt_belt_speed': ['gbt belt speed', 'gravity belt speed', 'belt thickener speed'],
+    'gbt_polymer': ['gbt polymer lbs', 'gbt polymer dose', 'gravity belt polymer dose', 'belt thickener polymer', 'daf polymer', 'thickening polymer'],
+    'gbt_polymer_gpd': ['gbt polymer gpd', 'gravity belt polymer gpd', 'thickening polymer gpd feed rate'],
+    'gbt_polymer_cost': ['gbt polymer cost', 'gravity belt polymer cost', 'thickening polymer cost dollars'],
+    'gbt_1_hours': ['gbt 1 runtime hours', 'gbt1 runtime', 'gbt 1 hours'],
+    'gbt_2_hours': ['gbt 2 runtime hours', 'gbt2 runtime', 'gbt 2 hours'],
+    'gbt_3_hours': ['gbt 3 runtime hours', 'gbt3 runtime', 'gbt 3 hours'],
+    'daf_air_flow': ['daf air flow', 'saturator air flow', 'recycle air scfm', 'air flow scfm'],
+    'bowl_speed': ['bowl speed rpm', 'centrifuge bowl speed', 'centrifuge rpm'],
+    'polymer_cost': ['polymer cost dollars', 'polymer price', 'polymer dollar cost', 'chemical cost polymer'],
+    'hauling_cost': ['hauling cost dollars', 'truck hauling cost', 'disposal hauling cost'],
+    'dewatering_run_hours': ['dewatering run hours', 'dewatering equipment hours', 'dewatering uptime hours'],
+    'thickening_run_hours': ['thickening run hours', 'thickener uptime hours', 'gbt run hours'],
+    'screw_press_hours': ['screw press hours', 'screw press runtime', 'screw press run hours'],
+    'was_flow': ['was flow gpm', 'waste activated sludge flow', 'was flow mgd', 'was feed flow'],
+    'volatile_solids': ['volatile solids percent', 'vs percent', 'vs percent solids', 'volatile solids concentration'],
+    'sludge_ph': ['sludge ph', 'cake ph', 'feed sludge ph'],
+    'sludge_temperature': ['sludge temperature', 'sludge temp', 'feed sludge temperature'],
+    'wash_water_flow': ['wash water flow gpm', 'belt wash water flow', 'screen wash water flow'],
+    'lime_dose': ['lime dose lbs ton', 'lime addition lbs', 'lime dose lbs per ton'],
+    'ferric_dose': ['ferric chloride dose', 'ferric dose lbs ton', 'ferric addition gpd'],
+    'dewatering_energy': ['dewatering energy kwh', 'centrifuge power kwh', 'dewatering kwh per day'],
+    'thickening_energy': ['thickening energy kwh', 'gbt power kwh', 'thickening kwh per day'],
+    'centrifuge_torque': ['centrifuge differential torque', 'centrifuge torque nm', 'scroll torque'],
+    'rag_removal': ['rag removal lbs', 'screenings removed lbs', 'rags removed count'],
+    'polymer_dilution_water': ['polymer dilution water gpm', 'polymer makedown water', 'makedown water flow'],
+}
+
+
+EXPECTED_UNIT_FAMILIES = {
+    'polymer': {'lbs/ton'},
+    'polymer_raw': {'lbs/ton'},
+    'polymer_gpd': {'GPD'},
+    'cake_quality': {'%'},
+    'dry_tons': {'Dry Tons', 'Tons'},
+    'wet_tons': {'Wet Tons', 'Tons'},
+    'trucks': {'Count'},
+    'influent_flow': {'MGD', 'GPM', 'GPD'},
+    'effluent_flow': {'MGD', 'GPM', 'GPD'},
+    'filtrate_turbidity': {'NTU', 'mg/L'},
+    'filtrate_flow': {'GPM', 'MGD', 'GPD'},
+    'dewatering_feed': {'GPM', 'MGD', 'GPD'},
+    'feed_solids': {'%'},
+    'thickener_feed': {'GPM', 'MGD', 'GPD'},
+    'thickener_underflow': {'%'},
+    'thickener_overflow': {'NTU', 'mg/L'},
+    'thickener_torque': {'Nm'},
+    'gbt_feed': {'GPM', 'MGD', 'GPD'},
+    'gbt_underflow': {'%'},
+    'gbt_overflow': {'NTU', 'mg/L'},
+    'gbt_belt_speed': {'RPM'},
+    'gbt_polymer': {'lbs/ton'},
+    'gbt_polymer_gpd': {'GPD'},
+    'gbt_polymer_cost': {'$'},
+    'gbt_1_hours': {'Hours'}, 'gbt_2_hours': {'Hours'}, 'gbt_3_hours': {'Hours'},
+    'bowl_speed': {'RPM'},
+    'polymer_cost': {'$'},
+    'hauling_cost': {'$'},
+    'centrifuge_1_hours': {'Hours'}, 'centrifuge_2_hours': {'Hours'}, 'centrifuge_3_hours': {'Hours'},
+    'bfp_hours': {'Hours'}, 'rotary_press_hours': {'Hours'},
+    'dewatering_run_hours': {'Hours'},
+    'thickening_run_hours': {'Hours'},
+    'screw_press_hours': {'Hours'},
+    'was_flow': {'GPM', 'MGD', 'GPD'},
+    'volatile_solids': {'%'},
+    'wash_water_flow': {'GPM', 'MGD', 'GPD'},
+    'lime_dose': {'lbs/ton'},
+    'ferric_dose': {'lbs/ton', 'GPD'},
+    'dewatering_energy': {'kWh'},
+    'thickening_energy': {'kWh'},
+    'centrifuge_torque': {'Nm'},
+    'polymer_dilution_water': {'GPM', 'MGD', 'GPD'},
+}
+
+
+def categorize_param(key):
+    if key.startswith('gbt') or key.startswith('thickener') or key in ('thickening_run_hours', 'daf_air_flow', 'was_flow', 'thickening_energy'):
+        return 'Thickening'
+    if key in ('influent_flow', 'effluent_flow'):
+        return 'Flow'
+    if key in ('polymer_cost', 'hauling_cost', 'gbt_polymer_cost'):
+        return 'Cost'
+    if key in ('volatile_solids', 'sludge_ph', 'sludge_temperature'):
+        return 'Sludge Quality'
+    if key in ('lime_dose', 'ferric_dose', 'polymer_dilution_water'):
+        return 'Chemicals'
+    return 'Dewatering'
+
+
+# For parameters where equipment identity is everything (e.g. "which centrifuge's run hours is this?"),
+# fuzzy text similarity alone isn't reliable - "BFP Hours" and "Centrifuge 1 Hours" both contain "hours"
+# and can score similarly. REQUIRED_TOKENS makes a column ineligible for a slot unless it contains at
+# least one of these distinguishing substrings - a hard gate, checked before any fuzzy scoring happens.
+# REQUIRED_TOKEN_GROUPS: for parameters where the concept is really "equipment X" or "substance X + cost",
+# a column must satisfy EVERY group listed (AND across groups, OR within a group) before it's even
+# allowed to compete on fuzzy text similarity. This is a hard gate, not a soft preference - e.g.
+# polymer_cost requires (a polymer word) AND (a cost word), so "Hauling Cost" can never win that slot
+# just because "cost" alone fuzzy-matches reasonably well.
+REQUIRED_TOKEN_GROUPS = {
+    # Dewatering equipment identity
+    'centrifuge_1_hours': [['centrifuge 1', 'centrifuge1']],
+    'centrifuge_2_hours': [['centrifuge 2', 'centrifuge2']],
+    'centrifuge_3_hours': [['centrifuge 3', 'centrifuge3']],
+    'bfp_hours': [['bfp', 'belt filter press', 'belt press']],
+    'rotary_press_hours': [['rotary press', 'rotary']],
+    'screw_press_hours': [['screw press', 'screw']],
+    'bowl_speed': [['bowl', 'centrifuge']],
+    'centrifuge_torque': [['centrifuge']],
+    # Cost fields - require the substance word AND a cost word, so different cost columns can't swap
+    'polymer_cost': [['poly'], ['cost', 'price', 'dollar']],
+    'hauling_cost': [['haul', 'truck', 'disposal']],
+    'trucks': [['truck']],
+    # Thickening domain - GBT specifically
+    'gbt_feed': [['gbt', 'gravity belt', 'belt thickener']],
+    'gbt_underflow': [['gbt', 'gravity belt', 'belt thickener']],
+    'gbt_overflow': [['gbt', 'gravity belt', 'belt thickener']],
+    'gbt_belt_speed': [['gbt', 'gravity belt', 'belt thickener'], ['speed']],
+    'gbt_polymer': [['gbt', 'gravity belt', 'belt thickener', 'daf']],
+    'gbt_polymer_gpd': [['gbt', 'gravity belt', 'belt thickener', 'daf'], ['gpd']],
+    'gbt_polymer_cost': [['gbt', 'gravity belt', 'belt thickener', 'daf'], ['cost', 'price', 'dollar']],
+    'gbt_1_hours': [['gbt 1', 'gbt1']],
+    'gbt_2_hours': [['gbt 2', 'gbt2']],
+    'gbt_3_hours': [['gbt 3', 'gbt3']],
+    # Thickening domain - gravity thickener specifically (distinct from GBT)
+    'thickener_feed': [['thickener', 'gravity thickener']],
+    'thickener_underflow': [['thickener', 'gravity thickener']],
+    'thickener_overflow': [['thickener', 'gravity thickener']],
+    'thickener_torque': [['thickener', 'gravity thickener', 'rake']],
+    # DAF and combined thickening hours
+    'daf_air_flow': [['daf', 'saturator', 'flotation'], ['air']],
+    'thickening_run_hours': [['thicken', 'gbt', 'gravity thickener']],
+    'was_flow': [['waste activated', 'was flow', 'was feed']],
+    # Chemicals - require the substance word so lime/ferric/polymer dosing columns can't swap
+    'lime_dose': [['lime']],
+    'ferric_dose': [['ferric']],
+    'polymer_dilution_water': [['dilution water', 'makedown water', 'make down water', 'make-down water']],
+    # Sludge quality - "volatile solids" spelled out to avoid the bare "vs" abbreviation false-matching
+    'volatile_solids': [['volatile solids', 'vs percent', 'vs %']],
+    'sludge_ph': [['ph']],
+    'sludge_temperature': [['temp']],
+    'wash_water_flow': [['wash water', 'belt wash', 'screen wash']],
+    'rag_removal': [['rag', 'screening']],
+    # Energy - require an energy word AND a domain word, so dewatering/thickening energy can't swap
+    'dewatering_energy': [['energy', 'kwh', 'power'], ['centrifuge', 'bfp', 'belt filter', 'rotary press', 'screw press', 'dewatering']],
+    'thickening_energy': [['energy', 'kwh', 'power'], ['gbt', 'thickener', 'thickening', 'daf']],
+}
+
+# EXCLUDE_TOKENS is the complementary check: disqualify a column outright if it contains a token that
+# marks it as clearly belonging to a *different* process (dewatering vs. thickening) or different
+# specific equipment, even if it would otherwise score well on generic keywords like "polymer" or "hours".
+EXCLUDE_TOKENS = {
+    'polymer': ['gbt', 'thickener', 'thickening', 'daf'],
+    'polymer_raw': ['gbt', 'thickener', 'thickening', 'daf'],
+    'polymer_gpd': ['gbt', 'thickener', 'thickening', 'daf'],
+    'polymer_cost': ['gbt', 'thickener', 'thickening', 'daf', 'haul', 'truck'],
+    'hauling_cost': ['polymer', 'poly'],
+    'cake_quality': ['gbt', 'thickener', 'thickening'],
+    'dry_tons': ['gbt', 'thickener', 'thickening'],
+    'wet_tons': ['gbt', 'thickener', 'thickening'],
+    'trucks': ['gbt', 'thickener', 'thickening'],
+    'filtrate_turbidity': ['gbt', 'thickener', 'thickening'],
+    'filtrate_flow': ['gbt', 'thickener', 'thickening'],
+    'dewatering_feed': ['gbt', 'thickener', 'thickening'],
+    'dewatering_run_hours': ['gbt', 'thickener', 'thickening'],
+    'centrifuge_1_hours': ['gbt', 'thickener', 'thickening', 'bfp', 'rotary', 'screw'],
+    'centrifuge_2_hours': ['gbt', 'thickener', 'thickening', 'bfp', 'rotary', 'screw'],
+    'centrifuge_3_hours': ['gbt', 'thickener', 'thickening', 'bfp', 'rotary', 'screw'],
+    'bfp_hours': ['gbt', 'thickener', 'thickening', 'centrifuge', 'rotary', 'screw'],
+    'rotary_press_hours': ['gbt', 'thickener', 'thickening', 'centrifuge', 'bfp', 'screw'],
+    'screw_press_hours': ['gbt', 'thickener', 'thickening', 'centrifuge', 'bfp', 'rotary'],
+    'bowl_speed': ['gbt', 'thickener', 'thickening', 'torque'],
+    'centrifuge_torque': ['bowl speed', 'rpm'],
+    'thickener_feed': ['centrifuge', 'bfp', 'rotary press', 'gbt'],
+    'thickener_underflow': ['centrifuge', 'bfp', 'rotary press', 'gbt'],
+    'thickener_overflow': ['centrifuge', 'bfp', 'rotary press', 'gbt'],
+    'thickener_torque': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_feed': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_underflow': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_overflow': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_belt_speed': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_polymer': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_polymer_gpd': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_polymer_cost': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_1_hours': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_2_hours': ['centrifuge', 'bfp', 'rotary press'],
+    'gbt_3_hours': ['centrifuge', 'bfp', 'rotary press'],
+    'thickening_run_hours': ['centrifuge', 'bfp', 'rotary press'],
+    'daf_air_flow': ['centrifuge', 'bfp', 'rotary press'],
+    'dewatering_energy': ['gbt', 'thickener', 'thickening', 'daf'],
+    'thickening_energy': ['centrifuge', 'bfp', 'rotary press', 'screw press'],
+}
+
+
+# ============================================================
+# FUZZY PARAMETER DETECTOR
+# ============================================================
+class FuzzyParameterDetector:
+    """Detects WWTP parameters in uploaded column headers using fuzzy matching."""
+
+    def __init__(self, columns):
+        self.columns = list(columns)
+        self.clean_columns = [self._clean(c) for c in self.columns]
+        self.detected_params = {}
+
+    @staticmethod
+    def _clean(s):
+        s = str(s).lower()
+        for ch in ['_', '-', '/', '(', ')', '%', '#']:
+            s = s.replace(ch, ' ')
+        return ' '.join(s.split())
+
+    def find_parameters(self, keyword_groups, threshold=55, expected_units=None, required_token_groups=None, exclude_tokens=None):
+        expected_units = expected_units or {}
+        required_token_groups = required_token_groups or {}
+        exclude_tokens = exclude_tokens or {}
+        results = {}
+        for param_name, keywords in keyword_groups.items():
+            allowed_units = expected_units.get(param_name)
+            req_groups = [[self._clean(t) for t in group] for group in required_token_groups.get(param_name, [])]
+            excl_tokens = [self._clean(t) for t in exclude_tokens.get(param_name, [])]
+            kw_cleans = [self._clean(kw) for kw in keywords]
+            best_col, best_score = None, 0
+            for col, col_clean in zip(self.columns, self.clean_columns):
+                # Hard gates, checked before any fuzzy scoring:
+                # - required_token_groups: column must satisfy EVERY group (AND across groups, OR
+                #   within a group). E.g. polymer_cost requires (a polymer word) AND (a cost word),
+                #   so "Hauling Cost" can never win that slot just because "cost" fuzzy-matches.
+                # - exclude_tokens: column is disqualified if it contains any of these, even if it
+                #   would otherwise score well (stops cross-domain/cross-equipment contamination).
+                # Short single-word tokens (<=3 letters, e.g. "ph", "was", "rag") use strict word-
+                # boundary matching so they don't false-match inside "graph"/"wash"/"storage". Longer
+                # tokens and multi-word phrases (e.g. "poly", "haul", "temp", "centrifuge 1") use
+                # substring/prefix matching so they still match "polymer", "hauling", "temperature".
+                padded_col = f' {col_clean} '
+
+                def _token_hits(token):
+                    if ' ' not in token and len(token) <= 3:
+                        return f' {token} ' in padded_col
+                    return token in col_clean
+
+                if req_groups and not all(any(_token_hits(t) for t in group) for group in req_groups):
+                    continue
+                if excl_tokens and any(_token_hits(t) for t in excl_tokens):
+                    continue
+
+                col_best, best_kw_len = 0, 1
+                for kw, kw_clean in zip(keywords, kw_cleans):
+                    score = max(
+                        fuzz.token_set_ratio(kw_clean, col_clean),
+                        fuzz.partial_ratio(kw_clean, col_clean),
+                    )
+                    if score > col_best:
+                        col_best = score
+                        best_kw_len = max(1, len(kw_clean.split()))
+
+                # Length-disparity penalty: a short keyword matching somewhere inside a long,
+                # multi-concept column name (e.g. "Cake Hauled Dry Tons Active Polymer Tons") is
+                # weak evidence, not a confident match - fuzzy ratios alone don't penalize this
+                # because they're specifically designed to tolerate extra words. Scale the score
+                # down when the column has meaningfully more tokens than the keyword that matched it.
+                col_len = max(1, len(col_clean.split()))
+                coverage = min(1.0, (best_kw_len + 1) / col_len)
+                adjusted = col_best * coverage
+
+                # Penalize columns whose detected unit doesn't match what this parameter expects.
+                # This is what stops e.g. a raw GPD polymer feed-rate column from beating a real
+                # lbs/ton dose column just because both contain the word "polymer".
+                if allowed_units:
+                    if self._detect_unit(col) not in allowed_units:
+                        adjusted = adjusted * 0.55
+
+                if adjusted > best_score:
+                    best_score = adjusted
+                    best_col = col
+            if best_col and best_score >= threshold:
+                results[param_name] = {'column': best_col, 'score': round(best_score), 'unit': self._detect_unit(best_col)}
+            else:
+                results[param_name] = {'column': None, 'score': round(best_score), 'unit': 'Unknown'}
+        self.detected_params = results
+        return results
+
+    @staticmethod
+    def _detect_unit(column_name):
+        col_lower = column_name.lower()
+        words = col_lower.replace('/', ' ').replace('-', ' ').split()
+        if any(x in col_lower for x in ['ntu']):
+            return 'NTU'
+        # Word-boundary check (not substring) so "ph" doesn't false-match inside "graph"/"phosphate".
+        if 'ph' in words:
+            return 'pH'
+        if 'kwh' in col_lower:
+            return 'kWh'
+        if 'temp' in col_lower or 'temperature' in col_lower:
+            return 'Temp'
+        # Only classify as a per-ton ratio if there's an actual ratio marker (a slash or "per"
+        # immediately next to "ton"/"dt") - NOT just because the words "poly" and "ton" both
+        # appear somewhere in a longer, unrelated compound column name.
+        ratio_markers = ['lbs/ton', 'lb/ton', 'lbs per ton', 'lb per ton', '/ton', '/dt', 'per ton', 'per dt']
+        if any(m in col_lower for m in ratio_markers):
+            return 'lbs/ton'
+        if 'gpd' in col_lower and 'poly' in col_lower:
+            return 'GPD'
+        if any(x in col_lower for x in ['%', 'percent', 'solids', 'cake', 'ts', 'tss', 'moisture']):
+            return '%'
+        if 'scfm' in col_lower:
+            return 'SCFM'
+        if any(x in col_lower for x in ['flow', 'gpm', 'mgd', 'gpd', 'rate']):
+            if 'mgd' in col_lower:
+                return 'MGD'
+            if 'gpm' in col_lower:
+                return 'GPM'
+            if 'gpd' in col_lower:
+                return 'GPD'
+            return 'MGD'
+        if any(x in col_lower for x in ['ton', 'dry', 'wet', 'weight', 'mass']):
+            if 'dry' in col_lower:
+                return 'Dry Tons'
+            if 'wet' in col_lower:
+                return 'Wet Tons'
+            return 'Tons'
+        if any(x in col_lower for x in ['truck', 'count', 'number', 'qty']):
+            return 'Count'
+        if any(x in col_lower for x in ['hour', 'runtime', 'time', 'hrs']):
+            return 'Hours'
+        if any(x in col_lower for x in ['mg/l', 'concentration', 'conc']):
+            return 'mg/L'
+        if any(x in col_lower for x in ['rpm', 'speed', 'bowl']):
+            return 'RPM'
+        if any(x in col_lower for x in ['torque', 'nm', 'ft-lb']):
+            return 'Nm'
+        if any(x in col_lower for x in ['cost', 'price', '$', 'dollar']):
+            return '$'
+        if any(x in col_lower for x in ['pressure', 'psi', 'bar']):
+            return 'PSI'
+        return 'Unknown'
+
+
+# ============================================================
+# SHARED LOAD / DETECT / MAPPING-EDITOR HELPERS
+# ============================================================
+def load_wwtp_csv(uploaded_file):
+    """Read a CSV, detect/parse a date column (or synthesize one), return (df, date_col)."""
+    df = pd.read_csv(uploaded_file)
+    df = df.reset_index(drop=True)
+    date_col = None
+    for col in df.columns:
+        if any(x in col.lower() for x in ['date', 'time', 'day', 'month', 'year']):
+            try:
+                converted = pd.to_datetime(df[col], errors='coerce')
+                if converted.notna().sum() > len(df) * 0.5:
+                    df[col] = converted
+                    date_col = col
+                    df = df.sort_values(col).reset_index(drop=True)
+                    break
+            except Exception:
+                pass
+    if not date_col:
+        df['Date'] = pd.date_range(start='2023-01-01', periods=len(df), freq='D')
+        date_col = 'Date'
+    return df, date_col
+
+
+def detect_parameters(df, threshold=55):
+    detector = FuzzyParameterDetector(df.columns)
+    return detector.find_parameters(PARAMETER_KEYWORDS, threshold=threshold, expected_units=EXPECTED_UNIT_FAMILIES,
+                                     required_token_groups=REQUIRED_TOKEN_GROUPS, exclude_tokens=EXCLUDE_TOKENS)
+
+
+def render_mapping_editor(detected_params, df_columns, key_prefix):
+    """Interactive, editable table so the user can confirm or correct every fuzzy-matched column
+    before it's used anywhere else in the app."""
+    all_columns = ["— None detected —"] + list(df_columns)
+    rows = []
+    for key, info in sorted(detected_params.items(), key=lambda kv: (categorize_param(kv[0]), kv[0])):
+        rows.append({
+            'Category': categorize_param(key),
+            'Parameter': key,
+            'Column Used': info['column'] if info['column'] else "— None detected —",
+            'Match %': int(info['score']),
+            'Unit': info['unit'],
+        })
+    mapping_df = pd.DataFrame(rows)
+
+    edited = st.data_editor(
+        mapping_df,
+        column_config={
+            'Category': st.column_config.TextColumn(disabled=True),
+            'Parameter': st.column_config.TextColumn(disabled=True),
+            'Column Used': st.column_config.SelectboxColumn(options=all_columns, required=True, width="large"),
+            'Match %': st.column_config.NumberColumn(disabled=True, format="%d%%"),
+            'Unit': st.column_config.TextColumn(disabled=False, help="Edit this if the auto-detected unit is wrong (e.g. it should say NTU, mg/L, %, lbs/ton, etc.)"),
+        },
+        hide_index=True,
+        use_container_width=True,
+        key=f"{key_prefix}_mapping_editor",
+    )
+
+    updated = {}
+    for _, row in edited.iterrows():
+        key = row['Parameter']
+        col = row['Column Used']
+        unit_override = str(row['Unit']).strip() if pd.notna(row['Unit']) and str(row['Unit']).strip() else None
+        if col == "— None detected —" or pd.isna(col):
+            updated[key] = {'column': None, 'score': 0, 'unit': 'Unknown'}
+        else:
+            updated[key] = {'column': col, 'score': row['Match %'], 'unit': unit_override or FuzzyParameterDetector._detect_unit(col)}
+    return updated
+
+
+# ============================================================
+# CORRELATION ANALYZER
+# ============================================================
+class CorrelationAnalyzer:
+    def __init__(self, df, detected_params):
+        self.df = df
+        self.detected_params = detected_params
+
+    def get_numeric_data(self):
+        numeric_data = {}
+        for param_info in self.detected_params.values():
+            if param_info['column']:
+                col_data = pd.to_numeric(self.df[param_info['column']], errors='coerce')
+                if col_data.dropna().shape[0] > 0:
+                    numeric_data[param_info['column']] = col_data
+        return pd.DataFrame(numeric_data)
+
+    def calculate_correlations(self):
+        df_numeric = self.get_numeric_data()
+        if len(df_numeric.columns) < 2:
+            return None
+        return df_numeric.corr()
+
+    def find_strong_correlations(self, threshold=0.7):
+        corr_matrix = self.calculate_correlations()
+        if corr_matrix is None:
+            return []
+        strong = []
+        for i in range(len(corr_matrix.columns)):
+            for j in range(i + 1, len(corr_matrix.columns)):
+                val = corr_matrix.iloc[i, j]
+                if pd.notna(val) and abs(val) >= threshold:
+                    strong.append({
+                        'Variable 1': corr_matrix.columns[i],
+                        'Variable 2': corr_matrix.columns[j],
+                        'Correlation': val,
+                        'Strength': 'Strong Positive' if val > 0 else 'Strong Negative',
+                        'Interpretation': self._interpret(corr_matrix.columns[i], corr_matrix.columns[j], val),
+                    })
+        return sorted(strong, key=lambda x: abs(x['Correlation']), reverse=True)
+
+    @staticmethod
+    def _interpret(var1, var2, corr_val):
+        v1, v2 = var1.lower(), var2.lower()
+        if ('polymer' in v1 or 'poly' in v1) and ('cake' in v2 or 'solids' in v2):
+            if corr_val < -0.5:
+                return "✅ Expected: More polymer → Better cake quality"
+            if corr_val > 0.5:
+                return "⚠️ Unexpected: More polymer → Worse cake quality (investigate)"
+        if ('cake' in v1 or 'solids' in v1) and 'truck' in v2:
+            if corr_val < -0.5:
+                return "✅ Expected: Better cake → Fewer trucks needed"
+            if corr_val > 0.5:
+                return "⚠️ Unexpected: Better cake → More trucks (investigate)"
+        if ('polymer' in v1 or 'poly' in v1) and 'truck' in v2:
+            if corr_val > 0.5:
+                return "✅ Expected: More polymer → Better dewatering → Fewer trucks"
+            if corr_val < -0.5:
+                return "⚠️ Unexpected: More polymer → More trucks (investigate)"
+        if 'underflow' in v1 and 'overflow' in v2:
+            if corr_val < -0.5:
+                return "✅ Expected: Better underflow → Better overflow clarity"
+            if corr_val > 0.5:
+                return "⚠️ Unexpected: Better underflow → Worse overflow (investigate)"
+        if 'feed' in v1 and 'underflow' in v2:
+            if corr_val < -0.5:
+                return "✅ Expected: Higher feed → Lower underflow concentration"
+            if corr_val > 0.5:
+                return "⚠️ Unexpected: Higher feed → Higher underflow (investigate)"
+        if corr_val > 0.7:
+            return "Strong positive relationship - variables move together"
+        if corr_val < -0.7:
+            return "Strong negative relationship - variables move in opposite directions"
+        return "Moderate relationship - investigate further"
+
+    def create_correlation_heatmap(self):
+        corr_matrix = self.calculate_correlations()
+        if corr_matrix is None:
+            return None
+        veolia_diverging = [
+            [0.0, VEOLIA['red']], [0.25, '#FFB3B3'], [0.5, '#FFFFFF'],
+            [0.75, VEOLIA['sky_blue']], [1.0, VEOLIA['marine']],
+        ]
+        fig = go.Figure(data=go.Heatmap(
+            z=corr_matrix.values, x=corr_matrix.columns, y=corr_matrix.columns,
+            colorscale=veolia_diverging, zmid=0, zmin=-1, zmax=1, text=np.round(corr_matrix.values, 2),
+            texttemplate='%{text:.2f}', textfont={"size": 10, "color": VEOLIA['marine']}, colorbar=dict(title="Correlation"),
+        ))
+        fig.update_layout(
+            title=dict(text="Correlation Matrix - Confirmed Parameters", font=dict(color=VEOLIA['marine'])),
+            height=600, xaxis_title="Parameters", yaxis_title="Parameters",
+            plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', font=dict(color=VEOLIA['marine']),
+        )
+        return fig
+
+    def create_scatter_plot(self, var1_col, var2_col):
+        var1_data = pd.to_numeric(self.df[var1_col], errors='coerce').dropna()
+        var2_data = pd.to_numeric(self.df[var2_col], errors='coerce')
+        var2_data = var2_data[var1_data.index]
+        corr = var1_data.corr(var2_data)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=var1_data, y=var2_data, mode='markers', marker=dict(size=8, color=VEOLIA['turquoise'], opacity=0.7), name='Data Points'))
+        if len(var1_data) > 1:
+            z = np.polyfit(var1_data, var2_data, 1)
+            p = np.poly1d(z)
+            x_trend = np.linspace(var1_data.min(), var1_data.max(), 100)
+            fig.add_trace(go.Scatter(x=x_trend, y=p(x_trend), mode='lines', name='Trend Line', line=dict(color=VEOLIA['apricot'], width=2)))
+        fig.update_layout(
+            title=dict(text=f"{var1_col} vs {var2_col}<br>Correlation: {corr:.3f}", font=dict(color=VEOLIA['marine'])),
+            xaxis_title=var1_col, yaxis_title=var2_col, height=500, hovermode='closest',
+            plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', font=dict(color=VEOLIA['marine']),
+            xaxis=dict(gridcolor='#E9EEF1'), yaxis=dict(gridcolor='#E9EEF1'),
+        )
+        return fig
+
+
+# ============================================================
+# KPI CALCULATOR
+# ============================================================
+class KPICalculator:
+    """Computes meaningful KPIs strictly from the columns the user has confirmed."""
+
+    def __init__(self, df, detected_params, plant_info=None):
+        self.df = df
+        self.dp = detected_params
+        self.plant_info = plant_info or {}
+
+    def _col(self, key):
+        info = self.dp.get(key, {})
+        col = info.get('column')
+        if not col:
+            return None
+        data = pd.to_numeric(self.df[col], errors='coerce').dropna()
+        return data if len(data) > 0 else None
+
+    @staticmethod
+    def _status_range(value, lo, hi):
+        if lo <= value <= hi:
+            return '✅ On Target'
+        elif value < lo:
+            return '🔴 Below Target'
+        else:
+            return '🟠 Above Target'
+
+    @staticmethod
+    def _status_upper(value, hi):
+        return '✅ On Target' if value <= hi else '🟠 Above Target'
+
+    @staticmethod
+    def _status_lower(value, lo):
+        return '✅ On Target' if value >= lo else '🔴 Below Target'
+
+    @staticmethod
+    def _insufficient(needed):
+        return {'insufficient': True, 'needed': needed}
+
+    @staticmethod
+    def _clarity_kpi(value, unit, ntu_target, mgl_target):
+        """Only apply a numeric pass/fail rating if we actually recognize the unit.
+        Otherwise report the value honestly as informational so we never invent a benchmark."""
+        if unit == 'NTU':
+            status = KPICalculator._status_upper(value, ntu_target)
+            target = f'<{ntu_target} NTU'
+            display_unit = 'NTU'
+        elif unit == 'mg/L':
+            status = KPICalculator._status_upper(value, mgl_target)
+            target = f'<{mgl_target} mg/L'
+            display_unit = 'mg/L'
+        else:
+            status = 'ℹ️ Informational — unit not confirmed as NTU/mg/L, no benchmark applied'
+            target = 'Lower is generally better'
+            display_unit = unit if unit not in ('Unknown', None) else 'units'
+        return {'value': value, 'unit': display_unit, 'target': target, 'status': status}
+
+    def calculate_dewatering_kpis(self):
+        k = {}
+        dew_equip = [e.lower() for e in self.plant_info.get('dewatering_equipment', [])]
+        is_centrifuge = any('centrifuge' in e for e in dew_equip)
+        is_belt = any('belt' in e for e in dew_equip)
+
+        cake_col = self.dp.get('cake_quality', {}).get('column')
+        cake = self._col('cake_quality')
+        if cake is not None:
+            v = cake.mean()
+            if is_centrifuge and not is_belt:
+                lo, hi = 20, 30
+            elif is_belt and not is_centrifuge:
+                lo, hi = 18, 25
+            else:
+                lo, hi = 18, 30
+            k['cake_solids'] = {'value': v, 'unit': '%', 'target': f'{lo}-{hi}%', 'status': self._status_range(v, lo, hi),
+                                 'basis': f"Average of **{cake_col}**."}
+            moisture = 100 - v
+            k['cake_moisture'] = {'value': moisture, 'unit': '%', 'target': '75-82%', 'status': self._status_range(moisture, 75, 82),
+                                   'basis': f"100% − average of **{cake_col}**."}
+        else:
+            k['cake_solids'] = self._insufficient(['Cake solids / cake quality (%) column'])
+            k['cake_moisture'] = self._insufficient(['Cake solids / cake quality (%) column'])
+
+        dry_col = self.dp.get('dry_tons', {}).get('column')
+        wet_col = self.dp.get('wet_tons', {}).get('column')
+        dry = self._col('dry_tons')
+        wet = self._col('wet_tons')
+        if dry is not None and wet is not None and wet.mean() > 0:
+            ratio = dry.mean() / wet.mean()
+            k['dry_wet_ratio'] = {'value': ratio, 'unit': '', 'target': '≥0.25 (excellent), 0.20-0.25 (good)', 'status': self._status_lower(ratio, 0.20),
+                                   'basis': f"Average **{dry_col}** ÷ average **{wet_col}**."}
+        else:
+            k['dry_wet_ratio'] = self._insufficient(['Dry tons and Wet tons columns (both, with nonzero wet tons)'])
+
+        poly_col = self.dp.get('polymer', {}).get('column')
+        poly_raw_col = self.dp.get('polymer_raw', {}).get('column')
+        poly_raw_unit = self.dp.get('polymer_raw', {}).get('unit')
+        poly_gpd_col = self.dp.get('polymer_gpd', {}).get('column')
+        poly_active = self._col('polymer')
+        poly_raw = self._col('polymer_raw')
+        poly_gpd = self._col('polymer_gpd')
+        activity_input = self.plant_info.get('dewatering_polymer_activity_pct')
+
+        if poly_active is not None:
+            v = poly_active.mean()
+            k['active_polymer_dose'] = {'value': v, 'unit': 'lbs/ton', 'target': '5-15 lbs active/ton DS', 'status': self._status_range(v, 5, 15),
+                                         'basis': f"Average of **{poly_col}**, confirmed as an active-basis lbs/ton dose."}
+        elif poly_raw is not None and poly_raw_unit == 'lbs/ton' and activity_input:
+            # Raw/neat column is already a per-ton dose - no flow needed, just scale it by % activity.
+            v = poly_raw.mean() * (activity_input / 100)
+            k['active_polymer_dose'] = {'value': v, 'unit': 'lbs/ton (estimated)', 'target': '5-15 lbs active/ton DS', 'status': self._status_range(v, 5, 15),
+                                         'basis': (f"Average **{poly_raw_col}** (already a lbs product/ton DS dose) × {activity_input:g}% product activity "
+                                                   f"(Plant Information) = lbs active/ton DS. Flow isn't needed here since the raw column is already normalized per ton.")}
+        elif poly_gpd is not None and activity_input and dry is not None and dry.mean() > 0:
+            # Raw column is a volumetric feed rate (GPD), not a dose - this DOES need flow, converted
+            # to a mass basis (assuming ~8.34 lbs/gal, i.e. specific gravity ≈ 1.0 for the solution)
+            # and then normalized by dry tons/day throughput.
+            v = (poly_gpd.mean() * 8.34 * (activity_input / 100)) / dry.mean()
+            k['active_polymer_dose'] = {'value': v, 'unit': 'lbs/ton (estimated)', 'target': '5-15 lbs active/ton DS', 'status': self._status_range(v, 5, 15),
+                                         'basis': (f"Average **{poly_gpd_col}** (gpd) × 8.34 lbs/gal (assumes solution specific gravity ≈ 1.0) × "
+                                                   f"{activity_input:g}% product activity (Plant Information) ÷ average **{dry_col or '(dry tons)'}** "
+                                                   f"(tons/day) = lbs active/ton DS. This is the flow-based path — used because your raw polymer data "
+                                                   f"is a feed rate (GPD), not an already-normalized per-ton dose.")}
+        elif poly_raw is not None and activity_input and poly_raw_unit != 'lbs/ton':
+            k['active_polymer_dose'] = self._insufficient([
+                f"'{poly_raw_col}' isn't confirmed as a lbs/ton dose (detected unit: {poly_raw_unit}) - if it's actually a volumetric feed "
+                f"rate, map it under 'polymer_gpd' in Confirm Data Mapping instead so the flow-based calculation can be used; if it genuinely "
+                f"is a per-ton dose, correct its Unit to 'lbs/ton' in the mapping table."
+            ])
+        else:
+            k['active_polymer_dose'] = self._insufficient(['Active polymer dose (lbs active/ton DS) column, or a raw/neat polymer dose (lbs/ton) '
+                                                             'or feed rate (GPD) column plus the product\'s % activity entered in Plant Information'])
+
+        if poly_raw is not None:
+            v = poly_raw.mean()
+            k['raw_polymer_dose'] = {'value': v, 'unit': 'lbs/ton', 'target': 'Varies by product - no universal benchmark', 'status': "ℹ️ Informational — depends on your polymer product's % activity",
+                                      'basis': f"Average of **{poly_raw_col}**."}
+        else:
+            k['raw_polymer_dose'] = self._insufficient(['Raw/neat polymer dose (lbs product/ton DS) column'])
+
+        if poly_active is not None and poly_raw is not None and poly_raw.mean() > 0:
+            activity = (poly_active.mean() / poly_raw.mean()) * 100
+            k['polymer_activity_pct'] = {'value': activity, 'unit': '%', 'target': 'Compare to product spec sheet', 'status': 'ℹ️ Informational',
+                                          'basis': f"Average **{poly_col}** ÷ average **{poly_raw_col}** × 100."}
+        elif activity_input:
+            k['polymer_activity_pct'] = {'value': activity_input, 'unit': '%', 'target': 'As entered in Plant Information', 'status': 'ℹ️ Informational',
+                                          'basis': "Value entered directly in Plant Information (no active-basis column to cross-check it against)."}
+        else:
+            k['polymer_activity_pct'] = self._insufficient(['Both active and raw/neat polymer dose columns (to compute % activity), or enter it directly in Plant Information'])
+
+        cost_col = self.dp.get('polymer_cost', {}).get('column')
+        if cost_col and dry_col:
+            cost_series = pd.to_numeric(self.df[cost_col], errors='coerce')
+            dry_series = pd.to_numeric(self.df[dry_col], errors='coerce')
+            ratio = (cost_series / (dry_series * 2000)).replace([np.inf, -np.inf], np.nan).dropna()
+            if len(ratio) > 0:
+                v = ratio.mean()
+                k['polymer_cost_per_lb'] = {'value': v, 'unit': '$/lb DS', 'target': '$0.05-$0.15/lb DS', 'status': self._status_range(v, 0.05, 0.15),
+                                             'basis': f"Average of (**{cost_col}** ÷ (**{dry_col}** × 2000 lbs/ton))."}
+            else:
+                k['polymer_cost_per_lb'] = self._insufficient(['Polymer cost ($) and dry tons columns (valid paired data)'])
+        else:
+            k['polymer_cost_per_lb'] = self._insufficient(['Polymer cost ($) column'])
+
+        if dry is not None:
+            throughput = dry.mean() * 2000
+            k['dewatering_throughput'] = {'value': throughput, 'unit': 'lbs DS/day', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational',
+                                           'basis': f"Average **{dry_col}** × 2000 lbs/ton."}
+            cake_rate = throughput / 24
+            k['cake_production_rate'] = {'value': cake_rate, 'unit': 'lbs/hour', 'target': '500-2,000 lbs/hour', 'status': self._status_range(cake_rate, 500, 2000),
+                                          'basis': "Dewatering Throughput ÷ 24 hours."}
+        else:
+            k['dewatering_throughput'] = self._insufficient(['Dry tons / dry solids column'])
+            k['cake_production_rate'] = self._insufficient(['Dry tons / dry solids column'])
+
+        dfeed_col = self.dp.get('dewatering_feed', {}).get('column')
+        dfeed = self._col('dewatering_feed')
+        if dfeed is not None:
+            k['dewatering_feed_rate'] = {'value': dfeed.mean(), 'unit': 'gpm', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational',
+                                          'basis': f"Average of **{dfeed_col}**."}
+        else:
+            k['dewatering_feed_rate'] = self._insufficient(['Dewatering feed rate (gpm) column, e.g. centrifuge/BFP feed flow'])
+
+        ft_col = self.dp.get('filtrate_turbidity', {}).get('column')
+        filt_turb = self._col('filtrate_turbidity')
+        if filt_turb is not None:
+            unit = self.dp['filtrate_turbidity']['unit']
+            k['filtrate_turbidity'] = self._clarity_kpi(filt_turb.mean(), unit, ntu_target=10, mgl_target=500)
+            k['filtrate_turbidity']['basis'] = f"Average of **{ft_col}** (unit confirmed as {unit})."
+        else:
+            k['filtrate_turbidity'] = self._insufficient(['Filtrate/centrate turbidity column - none of your columns matched this'])
+
+        ff_col = self.dp.get('filtrate_flow', {}).get('column')
+        filt_flow = self._col('filtrate_flow')
+        if filt_flow is not None:
+            v = filt_flow.mean()
+            k['filtrate_flow_rate'] = {'value': v, 'unit': 'gpm', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational',
+                                        'basis': f"Average of **{ff_col}**."}
+        else:
+            k['filtrate_flow_rate'] = self._insufficient(['Filtrate/centrate flow rate (gpm) column'])
+
+        fs_col = self.dp.get('feed_solids', {}).get('column')
+        feed_solids = self._col('feed_solids')
+        if dry is not None and feed_solids is not None and feed_solids.mean() > 0:
+            recovery = min((dry.mean() / feed_solids.mean()) * 100, 100)
+            k['solids_recovery'] = {'value': recovery, 'unit': '%', 'target': '>95%', 'status': self._status_lower(recovery, 95),
+                                     'basis': f"Average **{dry_col}** ÷ average **{fs_col}** × 100 (capped at 100%)."}
+        else:
+            k['solids_recovery'] = self._insufficient(['Influent/feed solids loading (tons or lbs DS) column - not detected in your data'])
+
+        haul_col = self.dp.get('hauling_cost', {}).get('column')
+        if haul_col and wet_col:
+            haul_series = pd.to_numeric(self.df[haul_col], errors='coerce')
+            wet_series = pd.to_numeric(self.df[wet_col], errors='coerce')
+            ratio2 = (haul_series / wet_series).replace([np.inf, -np.inf], np.nan).dropna()
+            if len(ratio2) > 0:
+                k['hauling_cost_per_wet_ton'] = {'value': ratio2.mean(), 'unit': '$/wet ton', 'target': 'Varies by hauling contract', 'status': 'ℹ️ Informational',
+                                                  'basis': f"Average of (**{haul_col}** ÷ **{wet_col}**)."}
+            else:
+                k['hauling_cost_per_wet_ton'] = self._insufficient(['Hauling cost ($) and wet tons columns (valid paired data)'])
+        else:
+            k['hauling_cost_per_wet_ton'] = self._insufficient(['Hauling cost ($) column'])
+
+        hrs_keys = ['centrifuge_1_hours', 'centrifuge_2_hours', 'centrifuge_3_hours', 'bfp_hours', 'rotary_press_hours', 'dewatering_run_hours']
+        vals, used_cols = [], []
+        for hkey in hrs_keys:
+            d = self._col(hkey)
+            if d is not None:
+                vals.append((d / 24 * 100).clip(upper=100).mean())
+                used_cols.append(self.dp[hkey]['column'])
+        if vals:
+            v = float(np.mean(vals))
+            k['equipment_availability'] = {'value': v, 'unit': '%', 'target': '>90%', 'status': self._status_lower(v, 90),
+                                            'basis': f"Average of (Run Hours ÷ 24 × 100) across: {', '.join(f'**{c}**' for c in used_cols)}."}
+        else:
+            k['equipment_availability'] = self._insufficient(['Equipment run-hours column(s), e.g. daily centrifuge/BFP run hours'])
+
+        return k
+
+    def calculate_thickening_kpis(self):
+        k = {}
+        thick_equip = [e.lower() for e in self.plant_info.get('thickening_equipment', [])]
+        is_daf = any('daf' in e or 'flotation' in e for e in thick_equip)
+        is_gbt_selected = any('belt' in e for e in thick_equip)
+        has_gbt_columns = any(self.dp.get(kk, {}).get('column') for kk in
+                               ['gbt_underflow', 'gbt_overflow', 'gbt_feed', 'gbt_belt_speed', 'gbt_polymer',
+                                'gbt_polymer_gpd', 'gbt_polymer_cost', 'gbt_1_hours', 'gbt_2_hours', 'gbt_3_hours'])
+        has_gravity_columns = any(self.dp.get(kk, {}).get('column') for kk in
+                                   ['thickener_underflow', 'thickener_overflow', 'thickener_feed', 'thickener_torque'])
+        # Data-driven: if your columns are all named "GBT ...", treat this as a GBT even if the
+        # equipment checkbox in Plant Information wasn't touched.
+        is_gbt = is_gbt_selected or (has_gbt_columns and not has_gravity_columns)
+
+        # Overall plant dry tons - used as an approximation basis if we need to normalize a raw
+        # polymer total into a per-ton dose (see the thickening polymer section below).
+        dry_col = self.dp.get('dry_tons', {}).get('column')
+        dry = self._col('dry_tons')
+
+        uf_col_key = 'thickener_underflow' if self.dp.get('thickener_underflow', {}).get('column') else 'gbt_underflow'
+        uf = self._col('thickener_underflow')
+        gbt_uf = self._col('gbt_underflow')
+        primary_uf = uf if uf is not None else gbt_uf
+        if primary_uf is not None:
+            v = primary_uf.mean()
+            lo, hi = (6, 12) if is_daf else (4, 8)
+            uf_col = self.dp[uf_col_key]['column']
+            k['thickened_solids'] = {'value': v, 'unit': '%', 'target': f'{lo}-{hi}%', 'status': self._status_range(v, lo, hi),
+                                      'basis': f"Average of **{uf_col}**."}
+            lbs_gal = v * 8.34 / 100
+            k['underflow_lbs_gal'] = {'value': lbs_gal, 'unit': 'lbs DS/gal', 'target': 'Higher = less downstream load', 'status': 'ℹ️ Informational',
+                                       'basis': f"Average **{uf_col}** (%) × 8.34 lbs/gal ÷ 100."}
+        else:
+            k['thickened_solids'] = self._insufficient(['Thickener/GBT underflow solids (%) column'])
+            k['underflow_lbs_gal'] = self._insufficient(['Thickener/GBT underflow solids (%) column'])
+
+        fs_col = self.dp.get('feed_solids', {}).get('column')
+        feed_solids = self._col('feed_solids')
+        if feed_solids is not None:
+            k['feed_solids_concentration'] = {'value': feed_solids.mean(), 'unit': '%', 'target': 'Track trend - context for other thickening KPIs', 'status': 'ℹ️ Informational',
+                                               'basis': f"Average of **{fs_col}**."}
+        else:
+            k['feed_solids_concentration'] = self._insufficient(['Feed/influent solids concentration (%) column'])
+
+        of = self._col('thickener_overflow')
+        of_key = 'thickener_overflow'
+        if of is None:
+            of = self._col('gbt_overflow')
+            of_key = 'gbt_overflow'
+        if of is not None:
+            unit = self.dp[of_key]['unit']
+            of_col = self.dp[of_key]['column']
+            k['overflow_turbidity'] = self._clarity_kpi(of.mean(), unit, ntu_target=5, mgl_target=500)
+            k['overflow_turbidity']['basis'] = f"Average of **{of_col}** (unit confirmed as {unit})."
+        else:
+            k['overflow_turbidity'] = self._insufficient(['Thickener/GBT overflow TSS or turbidity column - none of your columns matched this'])
+
+        feed_key = 'thickener_feed' if self.dp.get('thickener_feed', {}).get('column') else 'gbt_feed'
+        feed = self._col('thickener_feed')
+        if feed is None:
+            feed = self._col('gbt_feed')
+        feed_col = self.dp.get(feed_key, {}).get('column')
+
+        if feed is not None and primary_uf is not None:
+            throughput = feed.mean() * 1440 * 8.34 * (primary_uf.mean() / 100)
+            k['thickening_throughput'] = {'value': throughput, 'unit': 'lbs DS/day', 'target': 'Varies by equipment', 'status': 'ℹ️ Informational (estimated)',
+                                           'basis': f"Average **{feed_col}** (gpm) × 1440 min/day × 8.34 lbs/gal × (average **{uf_col}** ÷ 100)."}
+            underflow_rate = throughput / 24
+            k['underflow_production_rate'] = {'value': underflow_rate, 'unit': 'lbs/hour', 'target': '200-1,000 lbs/hour', 'status': self._status_range(underflow_rate, 200, 1000),
+                                               'basis': "Thickening Throughput ÷ 24 hours."}
+        else:
+            k['thickening_throughput'] = self._insufficient(['Thickener/GBT feed flow (gpm) column together with underflow % column'])
+            k['underflow_production_rate'] = self._insufficient(['Thickener/GBT feed flow (gpm) column together with underflow % column'])
+
+        k['solids_capture_efficiency'] = self._insufficient(['Full mass-balance data: feed solids concentration (%), feed flow, and overflow TSS'])
+        k['overflow_flow_rate'] = self._insufficient(['Overflow flow rate (gpm) column - not currently tracked in your data'])
+
+        area = self.plant_info.get('thickener_area')
+        if area and feed is not None:
+            hlr = feed.mean() * 1440 / area
+            k['hydraulic_loading_rate'] = {'value': hlr, 'unit': 'gpd/sq ft', 'target': '400-800 gpd/sq ft (gravity thickener typical)', 'status': self._status_range(hlr, 400, 800),
+                                            'basis': f"Average **{feed_col}** × 1440 min/day ÷ {area:g} sq ft (from Plant Information)."}
+        else:
+            k['hydraulic_loading_rate'] = self._insufficient(['Thickener surface area (Plant Information) plus feed flow (gpm) column'])
+
+        if area and feed is not None and primary_uf is not None:
+            throughput = feed.mean() * 1440 * 8.34 * (primary_uf.mean() / 100)
+            loading = throughput / area
+            k['solids_loading_rate'] = {'value': loading, 'unit': 'lbs DS/day/sq ft', 'target': '0.5-2.0 lbs/day/sq ft', 'status': self._status_range(loading, 0.5, 2.0),
+                                         'basis': f"Thickening Throughput ÷ {area:g} sq ft (from Plant Information)."}
+        else:
+            k['solids_loading_rate'] = self._insufficient(['Thickener surface area (enter in Plant Information) plus feed flow & underflow % data'])
+
+        volume = self.plant_info.get('thickener_volume_gal')
+        if volume and not is_gbt and feed is not None and feed.mean() > 0:
+            rt_hours = volume / (feed.mean() * 60)
+            k['retention_time'] = {'value': rt_hours, 'unit': 'hours', 'target': '18-24+ hours (gravity thickener typical)', 'status': self._status_lower(rt_hours, 18),
+                                    'basis': f"{volume:g} gallons (Plant Information) ÷ (average **{feed_col}** gpm × 60)."}
+        elif is_gbt:
+            k['retention_time'] = self._insufficient(['Retention time is not meaningful for GBTs (continuous mechanical units, not tanks) - this is expected to be empty for your equipment'])
+        else:
+            k['retention_time'] = self._insufficient(['Thickener tank volume (gallons, enter in Plant Information) plus feed flow - only applicable to gravity thickeners, not GBT'])
+
+        # --- Thickening polymer: unit-aware, so we never silently apply a lbs/ton target to a raw total ---
+        poly_col = self.dp.get('gbt_polymer', {}).get('column')
+        poly_unit = self.dp.get('gbt_polymer', {}).get('unit')
+        poly2 = self._col('gbt_polymer')
+        th_activity_input = self.plant_info.get('thickening_polymer_activity_pct')
+
+        if poly2 is not None and poly_unit == 'lbs/ton':
+            v = poly2.mean()
+            k['thickening_polymer_dose'] = {'value': v, 'unit': 'lbs/ton', 'target': '2-6 lbs active/ton DS (typical GBT/gravity)', 'status': self._status_range(v, 2, 6),
+                                             'basis': f"Average of **{poly_col}**, confirmed as an already-normalized lbs/ton dose."}
+            k['thickening_polymer_total'] = self._insufficient(['Not needed - your polymer column is already a per-ton dose'])
+        elif poly2 is not None and dry is not None and dry.mean() > 0:
+            activity_factor = (th_activity_input / 100) if th_activity_input else 1.0
+            v = (poly2.mean() * activity_factor) / dry.mean()
+            activity_note = (f" and adjusted for {th_activity_input:g}% product activity (Plant Information)" if th_activity_input
+                              else " — enter your product's % activity in Plant Information to refine this to an active basis")
+            k['thickening_polymer_dose'] = {'value': v, 'unit': 'lbs/ton (estimated)', 'target': '2-6 lbs active/ton DS (typical GBT/gravity)', 'status': self._status_range(v, 2, 6),
+                                             'basis': (f"**{poly_col}** is confirmed as '{poly_unit}', not a per-ton dose, so this is estimated as "
+                                                       f"average **{poly_col}** ÷ average **{dry_col or '(dry tons)'}**{activity_note}. "
+                                                       f"This assumes total plant dry tons is a reasonable proxy for GBT throughput - treat as approximate.")}
+            k['thickening_polymer_total'] = self._insufficient(['Not needed - an estimated per-ton dose was computed above'])
+        elif poly2 is not None:
+            k['thickening_polymer_dose'] = self._insufficient([
+                f"'{poly_col}' is confirmed as '{poly_unit}', not a per-ton dose, and there's no Dry Tons column available "
+                f"to normalize it - either map a true lbs/ton dose column, or confirm a Dry Tons column so this can be estimated."
+            ])
+            k['thickening_polymer_total'] = {'value': poly2.mean(), 'unit': poly_unit if poly_unit not in ('Unknown', None) else 'units/day',
+                                              'target': 'Not ratable without normalization', 'status': 'ℹ️ Informational — raw total, not per-ton',
+                                              'basis': f"Average of **{poly_col}** as-is (no throughput data available to normalize it)."}
+        else:
+            k['thickening_polymer_dose'] = self._insufficient(['Thickening polymer dose (lbs/ton) column'])
+            k['thickening_polymer_total'] = self._insufficient(['Thickening polymer usage column'])
+
+        cost_col2 = self.dp.get('gbt_polymer_cost', {}).get('column')
+        cost2 = self._col('gbt_polymer_cost')
+        if cost2 is not None and poly2 is not None and poly2.mean() > 0:
+            unit_cost = cost2.mean() / poly2.mean()
+            k['thickening_polymer_unit_cost'] = {'value': unit_cost, 'unit': f'$/{poly_unit if poly_unit not in ("Unknown", None) else "lb"}', 'target': 'Compare to your contract price', 'status': 'ℹ️ Informational',
+                                                  'basis': f"Average **{cost_col2}** ÷ average **{poly_col}**."}
+        else:
+            k['thickening_polymer_unit_cost'] = self._insufficient(['Thickening polymer cost ($) column together with polymer mass/volume column'])
+
+        k['daf_air_to_solids_ratio'] = self._insufficient([
+            "DAF air-to-solids ratio requires calibrated air mass flow and solids mass flow instrumentation "
+            "(saturator pressure/flow, recycle ratio) that most operational spreadsheets don't log - pull this "
+            "from your DAF control panel if you need it, rather than estimating it here."
+        ])
+
+        torque_col = self.dp.get('thickener_torque', {}).get('column')
+        torque = self._col('thickener_torque')
+        if torque is not None:
+            k['rake_torque_monitor'] = {'value': torque.mean(), 'unit': 'Nm', 'target': 'Compare to manufacturer-rated torque limit', 'status': 'ℹ️ Informational — rising trend may indicate rag/solids buildup',
+                                         'basis': f"Average of **{torque_col}**."}
+        else:
+            k['rake_torque_monitor'] = self._insufficient(['Thickener rake torque (Nm) column'])
+
+        speed_col = self.dp.get('gbt_belt_speed', {}).get('column')
+        speed_unit = self.dp.get('gbt_belt_speed', {}).get('unit')
+        speed = self._col('gbt_belt_speed')
+        if speed is not None:
+            k['belt_speed_monitor'] = {'value': speed.mean(), 'unit': speed_unit if speed_unit not in ('Unknown', None) else '', 'target': 'Track trend vs. underflow/overflow quality', 'status': 'ℹ️ Informational',
+                                        'basis': f"Average of **{speed_col}**."}
+        else:
+            k['belt_speed_monitor'] = self._insufficient(['GBT belt speed column'])
+
+        # --- Equipment availability: prefer individual unit runtime columns over a combined "total" column,
+        # since a summed total across multiple parallel units can't just be divided by 24. ---
+        unit_hrs_keys = ['gbt_1_hours', 'gbt_2_hours', 'gbt_3_hours']
+        vals, used_cols = [], []
+        for hkey in unit_hrs_keys:
+            d = self._col(hkey)
+            if d is not None:
+                vals.append((d / 24 * 100).clip(upper=100).mean())
+                used_cols.append(self.dp[hkey]['column'])
+        if vals:
+            v = float(np.mean(vals))
+            k['thickening_equipment_availability'] = {'value': v, 'unit': '%', 'target': '>92%', 'status': self._status_lower(v, 92),
+                                                        'basis': f"Average of (Run Hours ÷ 24 × 100) across individual unit columns: {', '.join(f'**{c}**' for c in used_cols)}."}
+        else:
+            th_hrs_col = self.dp.get('thickening_run_hours', {}).get('column')
+            th_hrs = self._col('thickening_run_hours')
+            if th_hrs is not None:
+                v = (th_hrs / 24 * 100).clip(upper=100).mean()
+                k['thickening_equipment_availability'] = {'value': v, 'unit': '%', 'target': '>92%', 'status': self._status_lower(v, 92),
+                                                            'basis': (f"Average of (**{th_hrs_col}** ÷ 24 × 100). Note: if this column sums runtime across "
+                                                                      f"multiple GBT units, this estimate will be inflated - map individual unit runtime "
+                                                                      f"columns (GBT 1/2/3 Hours) instead for an accurate reading.")}
+            else:
+                k['thickening_equipment_availability'] = self._insufficient(['Thickening equipment run-hours column(s), ideally per individual unit'])
+
+        return k
+
+
+# ============================================================
+# PERFORMANCE ANALYZER (AI RECOMMENDATIONS)
+# ============================================================
+class PerformanceAnalyzer:
+    def __init__(self, df, detected_params, plant_info=None):
+        self.df = df
+        self.detected_params = detected_params
+        self.plant_info = plant_info or {}
+
+    @staticmethod
+    def _estimate_savings(key, val):
+        value = val['value']
+        if key == 'active_polymer_dose':
+            annual_cost = value * 50 * 365
+            target_cost = 12 * 50 * 365
+            savings = max(annual_cost - target_cost, 0)
+            return (f"${savings:,.0f}/year*",
+                    f"*Estimated at an assumed $50/lb polymer price (replace with your actual pricing). "
+                    f"Reducing dose from {value:.1f} to 12 lbs/ton DS saves roughly ${savings:,.0f}/year.")
+        if key == 'cake_solids':
+            if value < 20:
+                current_trucks, target_trucks = 100, 60
+                savings = (current_trucks - target_trucks) * 500 * 365
+                return (f"${savings:,.0f}/year*",
+                        f"*Illustrative estimate assuming ~{current_trucks} trucks/day at current cake quality vs "
+                        f"~{target_trucks} trucks/day at 25% cake solids, at $500/haul. Replace with your actual "
+                        f"hauling contract rates and truck counts for an accurate figure.")
+            return ("Reduced hauling costs", "Improving cake solids further reduces cake volume and hauling frequency.")
+        return ("Improves process efficiency", "Specific dollar savings require site-specific cost data (hauling rates, energy costs, chemical pricing) not available from the uploaded dataset.")
+
+    def generate_recommendations(self, dew_kpis, thick_kpis):
+        combined = [(k, v, DEWATERING_KPI_DEFINITIONS.get(k, {})) for k, v in dew_kpis.items()]
+        combined += [(k, v, THICKENING_KPI_DEFINITIONS.get(k, {})) for k, v in thick_kpis.items()]
+
+        recs = []
+        good_items = []
+
+        for key, val, defn in combined:
+            if val.get('insufficient'):
+                continue
+            status = val.get('status', '')
+            if 'On Target' in status or 'Informational' in status:
+                good_items.append((key, defn.get('name', key), val))
+                continue
+
+            template = RECOMMENDATION_TEMPLATES.get(key, {})
+            priority = PRIORITY_MAP.get(key, '🟡 MEDIUM')
+            savings, savings_note = self._estimate_savings(key, val)
+
+            recs.append({
+                'priority': priority,
+                'category': defn.get('name', key.replace('_', ' ').title()),
+                'metric': defn.get('name', key),
+                'current_value': f"{val['value']:.2f} {val['unit']}",
+                'target_value': val.get('target', 'N/A'),
+                'issue': template.get('issue', f"{defn.get('name', key)} is outside the target range."),
+                'root_causes': template.get('root_causes', ['Process or equipment parameters may need adjustment', 'Sludge/feed characteristics may have changed']),
+                'actions': template.get('actions', ['Review recent operational data', 'Consult a process engineer for optimization']),
+                'potential_savings': savings,
+                'savings_explanation': savings_note,
+                'additional_data_needed': template.get('additional_data', ['Continue routine monitoring']),
+                'timeline': template.get('timeline', '2-4 weeks'),
+                'risk': template.get('risk', 'Low - monitor closely'),
+                'basis': val.get('basis', 'Calculation basis unavailable for this metric.'),
+            })
+
+        if not recs:
+            recs.append({
+                'priority': '✅ OPTIMAL', 'category': 'Overall Performance', 'metric': 'N/A',
+                'current_value': 'N/A', 'target_value': 'N/A',
+                'issue': 'All computable KPIs are at or near target - plant is operating at optimal performance levels.',
+                'root_causes': [], 'actions': ['Continue current operations', 'Maintain preventive maintenance schedule'],
+                'potential_savings': 'Maintain current efficiency',
+                'savings_explanation': 'Plant is performing well across all KPIs that could be computed from your data.',
+                'additional_data_needed': ['Continue routine monitoring'], 'timeline': 'Ongoing', 'risk': 'Low',
+                'basis': 'N/A - no metric was flagged.',
+            })
+
+        return recs, good_items
+
+
+# ============================================================
+# CHART RENDERER
+# ============================================================
+class ChartRenderer:
+    def __init__(self, df):
+        self.df = df
+
+    @staticmethod
+    def _base_layout(fig, title, unit):
+        fig.update_layout(
+            title=dict(text=title, font=dict(color=VEOLIA['marine'], size=16)),
+            height=400, hovermode='x unified', xaxis_title="Days", yaxis_title=unit,
+            plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF',
+            font=dict(color=VEOLIA['marine']),
+            legend=dict(bgcolor='rgba(255,255,255,0.8)'),
+            xaxis=dict(gridcolor='#E9EEF1'), yaxis=dict(gridcolor='#E9EEF1'),
+        )
+        return fig
+
+    def render_line_with_ma(self, column, unit, title, threshold_excellent=None, threshold_good=None):
+        col_data = pd.to_numeric(self.df[column], errors='coerce')
+        col_ma = col_data.rolling(window=7).mean()
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=self.df.index, y=col_data, mode='markers', name='Daily', marker=dict(size=4, color=VEOLIA['sky_blue'], opacity=0.7)))
+        fig.add_trace(go.Scatter(x=self.df.index, y=col_ma, mode='lines', name='7-day MA', line=dict(color=VEOLIA['marine'], width=2)))
+        if threshold_excellent is not None:
+            fig.add_hline(y=threshold_excellent, line_dash="dash", line_color=VEOLIA['forest_green'], annotation_text="Excellent", annotation_font_color=VEOLIA['forest_green'])
+        if threshold_good is not None:
+            fig.add_hline(y=threshold_good, line_dash="dash", line_color=VEOLIA['apricot'], annotation_text="Good", annotation_font_color=VEOLIA['apricot'])
+        return self._base_layout(fig, f"{title} ({unit})", unit)
+
+    def render_bar_with_ma(self, column, unit, title):
+        col_data = pd.to_numeric(self.df[column], errors='coerce')
+        col_ma = col_data.rolling(window=7).mean()
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=self.df.index, y=col_data, name='Daily', marker=dict(color=VEOLIA['turquoise'], opacity=0.75)))
+        fig.add_trace(go.Scatter(x=self.df.index, y=col_ma, mode='lines', name='7-day MA', line=dict(color=VEOLIA['marine'], width=2)))
+        return self._base_layout(fig, f"{title} ({unit})", unit)
+
+    def render_ratio(self, column1, column2, unit, title, threshold_excellent=None, threshold_good=None):
+        col1_data = pd.to_numeric(self.df[column1], errors='coerce')
+        col2_data = pd.to_numeric(self.df[column2], errors='coerce')
+        ratio_data = (col1_data / col2_data).replace([np.inf, -np.inf], np.nan)
+        ratio_ma = ratio_data.rolling(window=7).mean()
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=self.df.index, y=ratio_data, mode='markers', name='Daily', marker=dict(size=4, color=VEOLIA['sky_blue'], opacity=0.7)))
+        fig.add_trace(go.Scatter(x=self.df.index, y=ratio_ma, mode='lines', name='7-day MA', line=dict(color=VEOLIA['marine'], width=2)))
+        if threshold_excellent is not None:
+            fig.add_hline(y=threshold_excellent, line_dash="dash", line_color=VEOLIA['forest_green'], annotation_text="Excellent", annotation_font_color=VEOLIA['forest_green'])
+        if threshold_good is not None:
+            fig.add_hline(y=threshold_good, line_dash="dash", line_color=VEOLIA['apricot'], annotation_text="Good", annotation_font_color=VEOLIA['apricot'])
+        return self._base_layout(fig, f"{title} ({unit})", unit)
+
+
+def render_kpi_grid(kpis, definitions, per_row=4):
+    keys = list(definitions.keys())
+    for i in range(0, len(keys), per_row):
+        row_keys = keys[i:i + per_row]
+        cols = st.columns(len(row_keys))
+        for col, key in zip(cols, row_keys):
+            defn = definitions[key]
+            val = kpis.get(key)
+            with col:
+                if not val or val.get('insufficient'):
+                    st.metric(defn['name'], "—")
+                    needed = (val.get('needed') if val else None) or ['Additional data']
+                    st.caption(f"ℹ️ Need: {needed[0]}")
+                else:
+                    st.metric(defn['name'], f"{val['value']:.2f} {val['unit']}", help=defn['description'])
+                    st.caption(f"Target: {val.get('target', 'N/A')}")
+                    st.markdown(status_chip(val.get('status', '')), unsafe_allow_html=True)
+
+
+# ============================================================
+# SIDEBAR - FILE UPLOAD
+# ============================================================
+st.sidebar.header("📊 Upload Your Data")
+uploaded_file = st.sidebar.file_uploader("Choose your WWTP CSV file", type=['csv'], help="Upload a CSV file with your WWTP data")
+
+# ============================================================
+# MAIN APP LOGIC
+# ============================================================
+if uploaded_file is None:
+    st.info("👈 **Please upload a CSV file to get started**")
+    st.markdown("""
+    ### 📋 Expected Data Format
+
+    Your CSV should contain columns like:
+
+    **Dewatering:** Centrifuge / BFP / Rotary Press, Active Polymer (lbs/ton), Cake Solids (%), Equipment Run Hours,
+    Dry Tons, Wet Tons, Daily Trucks, Filtrate Turbidity/Flow, Polymer Cost
+
+    **Thickening:** Gravity Thickener / GBT / DAF, Feed Rate (GPM), Underflow TS (%), Overflow TSS/Turbidity,
+    Thickening Polymer, Equipment Run Hours
+
+    **Flow:** Influent Flow (MGD), Effluent Flow (MGD)
+
+    ### ✨ Features
+    - 🔍 Fuzzy Logic auto-detects your columns — **and you confirm/correct the mapping before anything is calculated**
+    - 📊 AI-derived KPI dashboard (only shows what can be computed from your data, no assumed units)
+    - 💡 AI recommendations with root causes, actions, and savings estimates
+    - 📈 Trend, custom-period, and **Period A vs Period B** benchmark comparison (just pick two date ranges)
+    - 🔗 Correlation analysis between parameters
+    - 🔎 Data quality / outlier detection
+
+    ### 🚀 Ready? Upload your file!
+    """)
+else:
+    try:
+        df, date_col = load_wwtp_csv(uploaded_file)
+        st.sidebar.success(f"✅ Loaded {len(df)} records")
+        st.sidebar.write(f"📅 {df[date_col].min().date()} to {df[date_col].max().date()}")
+    except Exception as e:
+        st.error(f"Error loading file: {e}")
+        st.stop()
+
+    # ------------------------------------------------------
+    # PLANT INFORMATION
+    # ------------------------------------------------------
+    with st.sidebar.expander("🏭 Plant Information", expanded=False):
+        plant_name = st.text_input("Plant Name", value="WWTP")
+        plant_location = st.text_input("Location", value="")
+
+        st.write("**Dewatering Equipment:**")
+        dewatering_equipment = st.multiselect(
+            "Select equipment types", ["Centrifuge", "Belt Filter Press (BFP)", "Rotary Press", "Drying Bed", "Other"],
+            default=["Centrifuge"],
+        )
+
+        st.write("**Thickening Equipment:**")
+        thickening_equipment = st.multiselect(
+            "Select equipment types", ["Gravity Thickener", "GBT (Gravity Belt Thickener)", "Rotary Drum", "DAF (Dissolved Air Flotation)", "Membrane", "Other"],
+            default=["GBT (Gravity Belt Thickener)"],
+        )
+
+        plant_capacity = st.number_input("Plant Capacity (MGD)", value=10.0, min_value=0.1)
+        thickener_area_input = st.number_input(
+            "Thickener Surface Area (sq ft) - optional, enables Solids Loading & Hydraulic Loading Rate KPIs",
+            value=0.0, min_value=0.0,
+        )
+        thickener_volume_input = st.number_input(
+            "Gravity Thickener Tank Volume (gallons) - optional, enables Retention Time KPI (not applicable to GBT)",
+            value=0.0, min_value=0.0,
+        )
+
+        st.write("**Polymer Product Activity (optional)**")
+        st.caption("If you only have a raw/neat/product-basis polymer column (not a true lbs-active/ton dose), "
+                   "enter your product's % activity from its spec sheet here and the app will estimate the "
+                   "active-basis dose for you, clearly labeled as an estimate.")
+        dewatering_polymer_activity_input = st.number_input(
+            "Dewatering Polymer Activity (%) - optional", value=0.0, min_value=0.0, max_value=100.0,
+        )
+        thickening_polymer_activity_input = st.number_input(
+            "Thickening Polymer Activity (%) - optional", value=0.0, min_value=0.0, max_value=100.0,
+        )
+
+        plant_info = {
+            'name': plant_name, 'location': plant_location,
+            'dewatering_equipment': dewatering_equipment, 'thickening_equipment': thickening_equipment,
+            'capacity': plant_capacity, 'thickener_area': thickener_area_input if thickener_area_input > 0 else None,
+            'thickener_volume_gal': thickener_volume_input if thickener_volume_input > 0 else None,
+            'dewatering_polymer_activity_pct': dewatering_polymer_activity_input if dewatering_polymer_activity_input > 0 else None,
+            'thickening_polymer_activity_pct': thickening_polymer_activity_input if thickening_polymer_activity_input > 0 else None,
+        }
+
+    # ------------------------------------------------------
+    # PARAMETER DETECTION + CONFIRM/EDIT MAPPING
+    # ------------------------------------------------------
+    auto_detected_params = detect_parameters(df, threshold=55)
+
+    st.header("🔧 Confirm Data Mapping")
+    st.write(
+        "This is exactly what we matched your columns to, with a confidence score. **Every KPI, chart, and "
+        "recommendation below uses only this table** — fix any row that picked the wrong column (this is common "
+        "when a file has several similarly-named fields, e.g. multiple polymer or cake columns) or set it to "
+        "**'— None detected —'** if you don't have that data. Nothing is assumed beyond what you confirm here."
+    )
+    with st.expander("📝 Review & edit detected columns", expanded=True):
+        detected_params = render_mapping_editor(auto_detected_params, df.columns, key_prefix="main")
+
+    st.divider()
+
+    st.sidebar.subheader("🔍 Confirmed Parameters")
+    detected_count = sum(1 for p in detected_params.values() if p['column'])
+    for param_name, param_info in detected_params.items():
+        if param_info['column']:
+            st.sidebar.write(f"✅ {param_name}: **{param_info['column']}** ({param_info['unit']})")
+    st.sidebar.write(f"\n**Confirmed: {detected_count}/{len(detected_params)} parameters**")
+
+    analyzer = PerformanceAnalyzer(df, detected_params, plant_info)
+    kpi_calculator = KPICalculator(df, detected_params, plant_info)
+    correlation_analyzer = CorrelationAnalyzer(df, detected_params)
+    chart_renderer = ChartRenderer(df)
+
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+        "📊 Dashboard", "💡 AI Recommendations", "📈 Trend / Benchmark", "🔗 Correlation Analysis",
+        "🔄 Dewatering", "🌀 Thickening", "🔍 Data Quality", "📋 Parameters", "📥 Raw Data",
+    ])
+
+    # ============================================================
+    # TAB 1: DASHBOARD
+    # ============================================================
+    with tab1:
+        header_col, year_col = st.columns([3, 1])
+        with header_col:
+            st.header(f"📊 Performance Dashboard - {plant_info.get('name', 'WWTP')}")
+            if plant_info.get('location'):
+                st.caption(f"📍 {plant_info['location']} | Capacity: {plant_info.get('capacity', 'N/A')} MGD")
+
+        available_years = sorted(df[date_col].dt.year.dropna().unique().astype(int).tolist())
+        today = date.today()
+        current_year = today.year
+        year_options = ["All"] + [str(y) for y in available_years]
+
+        if current_year in available_years:
+            default_year_str = str(current_year)
+        elif available_years:
+            default_year_str = str(max(available_years))
+        else:
+            default_year_str = "All"
+        default_index = year_options.index(default_year_str) if default_year_str in year_options else 0
+
+        with year_col:
+            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+            selected_year_str = st.selectbox("Year", year_options, index=default_index, key="dashboard_year_filter")
+
+        # Build the filtered dataframe the Dashboard's KPIs are computed from:
+        # - "All" -> the full uploaded dataset
+        # - the current calendar year -> Jan 1 through today (year-to-date)
+        # - any other year -> that full calendar year
+        if selected_year_str == "All":
+            dashboard_df = df
+            period_caption = f"All data ({df[date_col].min().date()} to {df[date_col].max().date()})"
+        else:
+            yr = int(selected_year_str)
+            if yr == current_year:
+                mask = (df[date_col].dt.year == yr) & (df[date_col].dt.date <= today)
+                dashboard_df = df[mask]
+                period_caption = f"Year to date: Jan 1, {yr} – {today.strftime('%b %d, %Y')}"
+            else:
+                mask = df[date_col].dt.year == yr
+                dashboard_df = df[mask]
+                period_caption = f"Full year {yr}"
+
+        if len(dashboard_df) == 0:
+            st.warning(f"No records fall in the selected period ({period_caption}). Showing full dataset instead.")
+            dashboard_df = df
+            period_caption = f"All data ({df[date_col].min().date()} to {df[date_col].max().date()})"
+
+        st.caption(f"📅 {period_caption} &nbsp;·&nbsp; {len(dashboard_df)} record(s) &nbsp;·&nbsp; "
+                   f"KPIs below are computed from the columns you confirmed above in **Confirm Data Mapping**, "
+                   f"averaged over this period.", unsafe_allow_html=False)
+
+        dashboard_kpi_calculator = KPICalculator(dashboard_df, detected_params, plant_info)
+        dew_kpis = dashboard_kpi_calculator.calculate_dewatering_kpis()
+        thick_kpis = dashboard_kpi_calculator.calculate_thickening_kpis()
+
+        st.subheader("🔄 Dewatering KPIs")
+        render_kpi_grid(dew_kpis, DEWATERING_KPI_DEFINITIONS)
+
+        st.divider()
+
+        st.subheader("🌀 Thickening KPIs")
+        render_kpi_grid(thick_kpis, THICKENING_KPI_DEFINITIONS)
+
+        st.divider()
+
+        st.subheader("💧 Flow Data")
+        flow_col1, flow_col2 = st.columns(2)
+        if detected_params.get('influent_flow', {}).get('column'):
+            inf_col = detected_params['influent_flow']['column']
+            inf_unit = detected_params['influent_flow']['unit']
+            inf_data = pd.to_numeric(dashboard_df[inf_col], errors='coerce').dropna()
+            if len(inf_data) > 0:
+                with flow_col1:
+                    st.metric(f"Influent Flow ({inf_unit})", f"{inf_data.mean():.2f}")
+        if detected_params.get('effluent_flow', {}).get('column'):
+            eff_col = detected_params['effluent_flow']['column']
+            eff_unit = detected_params['effluent_flow']['unit']
+            eff_data = pd.to_numeric(dashboard_df[eff_col], errors='coerce').dropna()
+            if len(eff_data) > 0:
+                with flow_col2:
+                    st.metric(f"Effluent Flow ({eff_unit})", f"{eff_data.mean():.2f}")
+
+    # ============================================================
+    # TAB 2: AI RECOMMENDATIONS
+    # ============================================================
+    with tab2:
+        st.header("💡 AI-Powered Recommendations")
+        st.write("Generated from the KPIs on the Dashboard tab, using only the parameters you confirmed above.")
+
+        dew_kpis = kpi_calculator.calculate_dewatering_kpis()
+        thick_kpis = kpi_calculator.calculate_thickening_kpis()
+        recommendations, good_items = analyzer.generate_recommendations(dew_kpis, thick_kpis)
+
+        for rec in recommendations:
+            with st.container():
+                col_h1, col_h2 = st.columns([3, 1])
+                with col_h1:
+                    st.markdown(priority_chip(rec['priority']), unsafe_allow_html=True)
+                    st.markdown(f"### {rec['category']}")
+                with col_h2:
+                    st.write(f"**Risk:** {rec['risk']}")
+
+                st.markdown("---")
+
+                col_m1, col_m2 = st.columns([2, 1])
+                with col_m1:
+                    st.write(f"**Metric:** {rec['metric']}")
+                    st.write(f"**Current:** {rec['current_value']} | **Target:** {rec['target_value']}")
+                    st.write(f"**Why this matters:** {rec['issue']}")
+
+                    if rec['root_causes']:
+                        st.write("**Likely Root Causes:**")
+                        for cause in rec['root_causes']:
+                            st.write(f"• {cause}")
+
+                    st.write("**Recommended Actions:**")
+                    for j, action in enumerate(rec['actions'], 1):
+                        st.write(f"{j}. {action}")
+
+                with col_m2:
+                    st.metric("Potential Savings", rec['potential_savings'])
+                    st.metric("Timeline", rec['timeline'])
+
+                with st.expander("📊 Savings Explanation"):
+                    st.write(rec['savings_explanation'])
+
+                with st.expander("🧮 How This Was Calculated", expanded=False):
+                    st.write(f"**Indicators/columns used:** {rec['basis']}")
+
+                with st.expander("📋 Additional Data That Would Improve This Analysis"):
+                    for item in rec['additional_data_needed']:
+                        st.write(f"• {item}")
+
+                st.divider()
+
+        if good_items:
+            with st.expander(f"✅ Performing Well ({len(good_items)} metric(s) at or near target)"):
+                for key, name, val in good_items:
+                    st.markdown(f"**{name}:** {val['value']:.2f} {val['unit']} &nbsp; {status_chip(val.get('status', ''))}", unsafe_allow_html=True)
+                    if val.get('basis'):
+                        st.caption(val['basis'])
+
+    # ============================================================
+    # TAB 3: TREND / BENCHMARK ANALYSIS
+    # ============================================================
+    with tab3:
+        st.header("📈 Trend & Benchmark Analysis")
+        st.write("Analyze any column over time, over a custom date range, or benchmark two date ranges side-by-side — all from your one uploaded file.")
+
+        numeric_cols = {}
+        for col in df.columns:
+            if col == date_col:
+                continue
+            s = pd.to_numeric(df[col], errors='coerce')
+            if s.notna().sum() > 0:
+                matched_unit = next((p['unit'] for p in detected_params.values() if p['column'] == col), None)
+                numeric_cols[col] = matched_unit or 'Unknown'
+
+        if not numeric_cols:
+            st.warning("No numeric columns found in your data.")
+        else:
+            analyze_mode = st.radio("Analyze", ["Single Indicator", "Ratio"], horizontal=True,
+                                     help="A ratio lets you build any custom metric on the fly (pick a numerator and a denominator column), e.g. Polymer Cost ÷ Dry Tons, without needing it to be a predefined KPI.")
+
+            if analyze_mode == "Single Indicator":
+                selected_column = st.selectbox("Select Indicator", list(numeric_cols.keys()), format_func=lambda x: f"{x} ({numeric_cols[x]})")
+                working_label = selected_column
+                working_unit = numeric_cols[selected_column]
+                working_series = pd.to_numeric(df[selected_column], errors='coerce')
+            else:
+                rc1, rc2 = st.columns(2)
+                col_list = list(numeric_cols.keys())
+                with rc1:
+                    numerator_col = st.selectbox("Numerator", col_list, format_func=lambda x: f"{x} ({numeric_cols[x]})", key="ratio_numerator")
+                with rc2:
+                    default_denom_idx = 1 if len(col_list) > 1 else 0
+                    denominator_col = st.selectbox("Denominator", col_list, index=default_denom_idx, format_func=lambda x: f"{x} ({numeric_cols[x]})", key="ratio_denominator")
+                num_series = pd.to_numeric(df[numerator_col], errors='coerce')
+                denom_series = pd.to_numeric(df[denominator_col], errors='coerce')
+                working_series = (num_series / denom_series).replace([np.inf, -np.inf], np.nan)
+                working_label = f"{numerator_col} ÷ {denominator_col}"
+                num_unit, denom_unit = numeric_cols[numerator_col], numeric_cols[denominator_col]
+                working_unit = f"{num_unit}/{denom_unit}" if 'Unknown' not in (num_unit, denom_unit) else "ratio"
+                if numerator_col == denominator_col:
+                    st.info("Numerator and denominator are the same column, so this ratio will just be 1.0 - pick two different columns.")
+
+            col_s2, col_s3 = st.columns(2)
+            with col_s2:
+                aggregation = st.selectbox("Aggregation Period", ["Daily", "Weekly", "Monthly", "Quarterly"])
+            with col_s3:
+                agg_method = st.selectbox("Aggregation Method", ["Average", "Total"], help="How to combine readings within each period, e.g. weekly average vs. weekly total. For ratios, Average is almost always the right choice.")
+
+            agg_func = 'sum' if agg_method == 'Total' else 'mean'
+            freq_map = {"Daily": 'D', "Weekly": 'W', "Monthly": 'MS', "Quarterly": 'QS'}
+
+            mode = st.radio("Analysis Mode", ["Full Timeline", "Custom Period", "Period A vs Period B (Benchmark)"], horizontal=True)
+
+            df_yoy = pd.DataFrame({date_col: pd.to_datetime(df[date_col]), 'value': working_series}).dropna()
+
+            if len(df_yoy) == 0:
+                st.warning("No valid numeric data for this selection.")
+            else:
+                data_min = df_yoy[date_col].min().date()
+                data_max = df_yoy[date_col].max().date()
+
+                def plot_series(df_agg, title):
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=df_agg.index, y=df_agg.values, mode='lines+markers', name=working_label, line=dict(color=VEOLIA['turquoise'], width=2), marker=dict(size=6, color=VEOLIA['marine'])))
+                    x_numeric = np.arange(len(df_agg))
+                    z = None
+                    if len(x_numeric) > 1:
+                        z = np.polyfit(x_numeric, df_agg.values, 1)
+                        p = np.poly1d(z)
+                        fig.add_trace(go.Scatter(x=df_agg.index, y=p(x_numeric), mode='lines', name='Trend', line=dict(color=VEOLIA['apricot'], width=2, dash='dash')))
+                    fig.update_layout(
+                        title=dict(text=title, font=dict(color=VEOLIA['marine'])),
+                        xaxis_title="Date", yaxis_title=working_unit, height=500, hovermode='x unified',
+                        plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', font=dict(color=VEOLIA['marine']),
+                        xaxis=dict(gridcolor='#E9EEF1'), yaxis=dict(gridcolor='#E9EEF1'),
+                    )
+                    render_chart_with_download(fig, key="trend_single_chart")
+
+                    stat_c1, stat_c2, stat_c3, stat_c4 = st.columns(4)
+                    with stat_c1:
+                        st.metric("Mean", f"{df_agg.mean():.3f}")
+                    with stat_c2:
+                        st.metric("Median", f"{df_agg.median():.3f}")
+                    with stat_c3:
+                        st.metric("Min", f"{df_agg.min():.3f}")
+                    with stat_c4:
+                        st.metric("Max", f"{df_agg.max():.3f}")
+
+                    if z is not None:
+                        direction = "📈 Increasing" if z[0] > 0 else "📉 Decreasing"
+                        st.write(f"**Trend:** {direction} (slope: {z[0]:.4f} per {aggregation.lower()[:-2] if aggregation != 'Daily' else 'day'})")
+
+                if mode == "Full Timeline":
+                    try:
+                        df_agg = df_yoy.set_index(date_col)['value'].resample(freq_map[aggregation]).agg(agg_func).dropna()
+                        if len(df_agg) > 0:
+                            plot_series(df_agg, f"{working_label} - {aggregation} Aggregation (Full Timeline)")
+                        else:
+                            st.warning("No data available after aggregation")
+                    except Exception as e:
+                        st.error(f"Error processing data: {e}")
+
+                elif mode == "Custom Period":
+                    date_range = st.date_input("Select Date Range", value=(data_min, data_max), min_value=data_min, max_value=data_max)
+                    if isinstance(date_range, tuple) and len(date_range) == 2:
+                        start_d, end_d = date_range
+                        mask = (df_yoy[date_col].dt.date >= start_d) & (df_yoy[date_col].dt.date <= end_d)
+                        df_period = df_yoy[mask]
+                        if len(df_period) == 0:
+                            st.warning("No data in the selected range")
+                        else:
+                            try:
+                                df_agg = df_period.set_index(date_col)['value'].resample(freq_map[aggregation]).agg(agg_func).dropna()
+                                if len(df_agg) > 0:
+                                    plot_series(df_agg, f"{working_label} - {start_d.strftime('%b %d, %Y')} to {end_d.strftime('%b %d, %Y')}")
+                                else:
+                                    st.warning("No data available after aggregation for this range")
+                            except Exception as e:
+                                st.error(f"Error processing data: {e}")
+                    else:
+                        st.info("👆 Select both a start and end date to continue")
+
+                else:  # Period A vs Period B (Benchmark) - defined by date ranges within the same file
+                    st.write("**Define two date ranges** (e.g., Jan–Jun 2025 vs Jan–Jun 2026) and the app will pull the matching data for each and plot them together.")
+                    midpoint = data_min + (data_max - data_min) / 2
+                    pc1, pc2 = st.columns(2)
+                    with pc1:
+                        st.markdown("**Period A**")
+                        a_range = st.date_input("Period A date range", value=(data_min, midpoint), min_value=data_min, max_value=data_max, key="period_a_range")
+                    with pc2:
+                        st.markdown("**Period B**")
+                        b_range = st.date_input("Period B date range", value=(midpoint, data_max), min_value=data_min, max_value=data_max, key="period_b_range")
+
+                    if isinstance(a_range, tuple) and len(a_range) == 2 and isinstance(b_range, tuple) and len(b_range) == 2:
+                        a_start, a_end = a_range
+                        b_start, b_end = b_range
+                        mask_a = (df_yoy[date_col].dt.date >= a_start) & (df_yoy[date_col].dt.date <= a_end)
+                        mask_b = (df_yoy[date_col].dt.date >= b_start) & (df_yoy[date_col].dt.date <= b_end)
+                        df_a = df_yoy[mask_a].copy()
+                        df_b = df_yoy[mask_b].copy()
+
+                        if len(df_a) == 0 or len(df_b) == 0:
+                            st.warning("One or both periods have no data. Adjust the date ranges above.")
+                        else:
+                            try:
+                                agg_a = df_a.set_index(date_col)['value'].resample(freq_map[aggregation]).agg(agg_func).dropna()
+                                agg_b = df_b.set_index(date_col)['value'].resample(freq_map[aggregation]).agg(agg_func).dropna()
+
+                                label_a = f"Period A: {a_start.strftime('%b %d, %Y')} - {a_end.strftime('%b %d, %Y')}"
+                                label_b = f"Period B: {b_start.strftime('%b %d, %Y')} - {b_end.strftime('%b %d, %Y')}"
+
+                                date_fmt = '%b %d, %Y' if aggregation in ('Daily', 'Weekly') else '%b %Y'
+                                offset_a = list(range(len(agg_a)))
+                                offset_b = list(range(len(agg_b)))
+                                dates_a_text = [d.strftime(date_fmt) for d in agg_a.index]
+                                dates_b_text = [d.strftime(date_fmt) for d in agg_b.index]
+
+                                # Thin the tick labels so long daily/weekly series don't get congested -
+                                # aim for roughly 10-12 visible labels regardless of series length.
+                                n = len(offset_a)
+                                step = max(1, int(np.ceil(n / 12))) if n else 1
+                                tick_idx = list(range(0, n, step))
+                                if n and tick_idx[-1] != n - 1:
+                                    tick_idx.append(n - 1)
+                                tickvals = [offset_a[i] for i in tick_idx]
+                                ticktext = [dates_a_text[i] for i in tick_idx]
+
+                                fig = go.Figure()
+                                fig.add_trace(go.Scatter(
+                                    x=offset_a, y=agg_a.values, mode='lines+markers', name=label_a,
+                                    line=dict(color=VEOLIA['turquoise'], width=3), customdata=dates_a_text,
+                                    hovertemplate=f"{label_a}<br>%{{customdata}}: %{{y:.3f}}<extra></extra>",
+                                ))
+                                fig.add_trace(go.Scatter(
+                                    x=offset_b, y=agg_b.values, mode='lines+markers', name=label_b,
+                                    line=dict(color=VEOLIA['apricot'], width=3), customdata=dates_b_text,
+                                    hovertemplate=f"{label_b}<br>%{{customdata}}: %{{y:.3f}}<extra></extra>",
+                                ))
+                                fig.update_layout(
+                                    title=dict(text=f"Benchmark Comparison: {working_label} ({aggregation}, {agg_method})", font=dict(color=VEOLIA['marine'])),
+                                    xaxis=dict(
+                                        title="Date (Period A dates shown; Period B is aligned to the same relative position - hover for its actual date)",
+                                        tickmode='array', tickvals=tickvals, ticktext=ticktext, tickangle=-30, gridcolor='#E9EEF1',
+                                    ),
+                                    yaxis=dict(title=working_unit, gridcolor='#E9EEF1'),
+                                    height=520, hovermode='closest', margin=dict(b=110),
+                                    plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', font=dict(color=VEOLIA['marine']),
+                                )
+                                render_chart_with_download(fig, key="trend_benchmark_chart")
+
+                                st.subheader("📊 Comparison Statistics")
+                                stat_df = pd.DataFrame({
+                                    'Metric': ['Mean', 'Median', 'Min', 'Max', 'Std Dev'],
+                                    label_a: [agg_a.mean(), agg_a.median(), agg_a.min(), agg_a.max(), agg_a.std()],
+                                    label_b: [agg_b.mean(), agg_b.median(), agg_b.min(), agg_b.max(), agg_b.std()],
+                                })
+                                stat_df['% Change (A→B)'] = ((stat_df[label_b] - stat_df[label_a]) / stat_df[label_a] * 100)
+                                st.dataframe(stat_df.round(4), use_container_width=True)
+
+                                if agg_a.mean() != 0:
+                                    pct_change_mean = (agg_b.mean() - agg_a.mean()) / agg_a.mean() * 100
+                                    direction = "increased" if pct_change_mean > 0 else "decreased"
+                                    st.info(f"**{working_label}** {direction} by **{abs(pct_change_mean):.1f}%** from Period A to Period B")
+                            except Exception as e:
+                                st.error(f"Error processing comparison: {e}")
+                    else:
+                        st.info("👆 Select both a start and end date for each period to continue")
+
+    # ============================================================
+    # TAB 4: CORRELATION ANALYSIS
+    # ============================================================
+    with tab4:
+        st.header("🔗 Correlation Analysis")
+        st.write("Analyze relationships between confirmed WWTP parameters.")
+
+        corr_matrix = correlation_analyzer.calculate_correlations()
+
+        if corr_matrix is None or len(corr_matrix.columns) < 2:
+            st.warning("Not enough confirmed numeric parameters for correlation analysis. Check **Confirm Data Mapping** above.")
+        else:
+            st.subheader("📊 Correlation Heatmap")
+            fig_heatmap = correlation_analyzer.create_correlation_heatmap()
+            if fig_heatmap:
+                render_chart_with_download(fig_heatmap, key="corr_heatmap")
+
+            st.divider()
+            st.subheader("🔍 Strong Correlations (|r| ≥ 0.7)")
+            strong_corrs = correlation_analyzer.find_strong_correlations(threshold=0.7)
+
+            if strong_corrs:
+                st.dataframe(pd.DataFrame(strong_corrs), use_container_width=True)
+            else:
+                st.info("No strong correlations found (threshold: |r| ≥ 0.7)")
+                st.subheader("📊 Moderate Correlations (0.5 ≤ |r| < 0.7)")
+                moderate_corrs = correlation_analyzer.find_strong_correlations(threshold=0.5)
+                moderate_corrs = [c for c in moderate_corrs if abs(c['Correlation']) < 0.7]
+                if moderate_corrs:
+                    st.dataframe(pd.DataFrame(moderate_corrs), use_container_width=True)
+                else:
+                    st.info("No moderate correlations found")
+
+            st.divider()
+            st.subheader("📈 Explore a Relationship")
+            st.write("Pick any two columns from your raw data to plot against each other (not limited to confirmed parameters).")
+            numeric_col_list = [c for c in df.columns if pd.to_numeric(df[c], errors='coerce').notna().sum() > 0]
+            default_x = strong_corrs[0]['Variable 1'] if strong_corrs else numeric_col_list[0]
+            default_y = strong_corrs[0]['Variable 2'] if strong_corrs else (numeric_col_list[1] if len(numeric_col_list) > 1 else numeric_col_list[0])
+            sc1, sc2 = st.columns(2)
+            with sc1:
+                x_var = st.selectbox("X-axis", numeric_col_list, index=numeric_col_list.index(default_x) if default_x in numeric_col_list else 0, key="scatter_x_var")
+            with sc2:
+                y_default_idx = numeric_col_list.index(default_y) if default_y in numeric_col_list else (1 if len(numeric_col_list) > 1 else 0)
+                y_var = st.selectbox("Y-axis", numeric_col_list, index=y_default_idx, key="scatter_y_var")
+            if x_var == y_var:
+                st.info("Pick two different parameters to see a scatter plot.")
+            else:
+                fig_scatter = correlation_analyzer.create_scatter_plot(x_var, y_var)
+                render_chart_with_download(fig_scatter, key="interactive_scatter")
+
+    # ============================================================
+    # TAB 5: DEWATERING
+    # ============================================================
+    with tab5:
+        st.header("🔄 Dewatering Analysis")
+        st.write(f"**Equipment:** {', '.join(plant_info.get('dewatering_equipment', ['Not specified']))}")
+
+        if detected_params.get('polymer', {}).get('column'):
+            st.subheader("Active Polymer Dose")
+            poly_col = detected_params['polymer']['column']
+            poly_unit = detected_params['polymer']['unit']
+            st.caption(f"Column used: **{poly_col}**")
+            fig = chart_renderer.render_line_with_ma(poly_col, poly_unit, "Active Polymer Dose", threshold_excellent=12, threshold_good=15)
+            render_chart_with_download(fig, key="poly_chart")
+            render_footnote('polymer', ' lbs/ton')
+
+        if detected_params.get('polymer_raw', {}).get('column'):
+            st.subheader("Raw/Neat Polymer Dose")
+            poly_raw_col = detected_params['polymer_raw']['column']
+            poly_raw_unit = detected_params['polymer_raw']['unit']
+            st.caption(f"Column used: **{poly_raw_col}**")
+            fig = chart_renderer.render_line_with_ma(poly_raw_col, poly_raw_unit, "Raw/Neat Polymer Dose")
+            render_chart_with_download(fig, key="poly_raw_chart")
+            st.caption("ℹ️ No fixed benchmark — this is product (as-delivered) basis, which varies by polymer concentration. "
+                       "Compare against the Active Polymer Dose above and your product's spec sheet.")
+
+        if detected_params.get('cake_quality', {}).get('column'):
+            st.subheader("Cake Quality")
+            cake_col = detected_params['cake_quality']['column']
+            cake_unit = detected_params['cake_quality']['unit']
+            st.caption(f"Column used: **{cake_col}**")
+            fig = chart_renderer.render_line_with_ma(cake_col, cake_unit, "Cake Quality", threshold_excellent=25, threshold_good=20)
+            render_chart_with_download(fig, key="cake_chart")
+            render_footnote('cake_quality', '%')
+
+        if detected_params.get('dry_tons', {}).get('column') and detected_params.get('wet_tons', {}).get('column'):
+            st.subheader("Dewatering Efficiency (Dry/Wet Ratio)")
+            dry_col = detected_params['dry_tons']['column']
+            wet_col = detected_params['wet_tons']['column']
+            st.caption(f"Columns used: **{dry_col}** / **{wet_col}**")
+            fig = chart_renderer.render_ratio(dry_col, wet_col, "Ratio", "Dry/Wet Ratio", threshold_excellent=0.25, threshold_good=0.20)
+            render_chart_with_download(fig, key="ratio_chart")
+            render_footnote('dry_wet_ratio')
+
+        if detected_params.get('trucks', {}).get('column'):
+            st.subheader("Sludge Truck Hauling")
+            truck_col = detected_params['trucks']['column']
+            truck_unit = detected_params['trucks']['unit']
+            st.caption(f"Column used: **{truck_col}**")
+            fig = chart_renderer.render_bar_with_ma(truck_col, truck_unit, "Daily Sludge Trucks")
+            render_chart_with_download(fig, key="truck_chart")
+            st.caption("ℹ️ No fixed industry benchmark for truck counts - fewer trucks generally indicates better dewatering "
+                       "(higher cake solids = less volume to haul). Compare against your own historical baseline.")
+
+        if not any(detected_params.get(k, {}).get('column') for k in ['polymer', 'cake_quality', 'dry_tons', 'wet_tons', 'trucks']):
+            st.info("No dewatering indicators are confirmed yet. Check **Confirm Data Mapping** above.")
+
+    # ============================================================
+    # TAB 6: THICKENING
+    # ============================================================
+    with tab6:
+        st.header("🌀 Thickening Analysis")
+        st.write(f"**Equipment:** {', '.join(plant_info.get('thickening_equipment', ['Not specified']))}")
+
+        if detected_params.get('thickener_underflow', {}).get('column'):
+            st.subheader("Gravity Thickener - Underflow Concentration")
+            uf_col = detected_params['thickener_underflow']['column']
+            uf_unit = detected_params['thickener_underflow']['unit']
+            st.caption(f"Column used: **{uf_col}**")
+            fig = chart_renderer.render_line_with_ma(uf_col, uf_unit, "Underflow Concentration", threshold_excellent=5, threshold_good=3)
+            render_chart_with_download(fig, key="thick_uf_chart")
+            render_footnote('thickener_underflow', '%')
+
+        if detected_params.get('thickener_overflow', {}).get('column'):
+            st.subheader("Gravity Thickener - Overflow Clarity")
+            of_col = detected_params['thickener_overflow']['column']
+            of_unit = detected_params['thickener_overflow']['unit']
+            st.caption(f"Column used: **{of_col}** (unit: {of_unit})")
+            fig = chart_renderer.render_line_with_ma(of_col, of_unit, "Overflow TSS", threshold_excellent=500, threshold_good=1000)
+            render_chart_with_download(fig, key="thick_of_chart")
+            if of_unit in ('mg/L', 'NTU'):
+                render_footnote('thickener_overflow', f' {of_unit}')
+            else:
+                st.caption("ℹ️ Benchmark lines assume mg/L TSS — verify against your column's actual unit before comparing.")
+
+        if detected_params.get('gbt_underflow', {}).get('column'):
+            st.subheader("GBT - Underflow Concentration")
+            gbt_uf_col = detected_params['gbt_underflow']['column']
+            gbt_uf_unit = detected_params['gbt_underflow']['unit']
+            st.caption(f"Column used: **{gbt_uf_col}**")
+            fig = chart_renderer.render_line_with_ma(gbt_uf_col, gbt_uf_unit, "GBT Underflow Concentration", threshold_excellent=8, threshold_good=5)
+            render_chart_with_download(fig, key="gbt_uf_chart")
+            render_footnote('gbt_underflow', '%')
+
+        if detected_params.get('gbt_overflow', {}).get('column'):
+            st.subheader("GBT - Overflow Clarity")
+            gbt_of_col = detected_params['gbt_overflow']['column']
+            gbt_of_unit = detected_params['gbt_overflow']['unit']
+            st.caption(f"Column used: **{gbt_of_col}** (unit: {gbt_of_unit})")
+            fig = chart_renderer.render_line_with_ma(gbt_of_col, gbt_of_unit, "GBT Overflow TSS", threshold_excellent=300, threshold_good=500)
+            render_chart_with_download(fig, key="gbt_of_chart")
+            if gbt_of_unit in ('mg/L', 'NTU'):
+                render_footnote('gbt_overflow', f' {gbt_of_unit}')
+            else:
+                st.caption("ℹ️ Benchmark lines assume mg/L TSS — verify against your column's actual unit before comparing.")
+
+        if detected_params.get('gbt_polymer', {}).get('column'):
+            st.subheader("Thickening Polymer Dose")
+            th_poly_col = detected_params['gbt_polymer']['column']
+            th_poly_unit = detected_params['gbt_polymer']['unit']
+            st.caption(f"Column used: **{th_poly_col}**")
+            fig = chart_renderer.render_line_with_ma(th_poly_col, th_poly_unit, "Thickening Polymer Dose", threshold_excellent=2, threshold_good=6)
+            render_chart_with_download(fig, key="thick_poly_chart")
+            st.caption("📊 Typical benchmark — 🟢 2-6 lbs active/ton DS for GBT/gravity thickening. DAF systems often run higher; treat as a starting reference, not a hard limit.")
+
+        if not any(detected_params.get(k, {}).get('column') for k in ['thickener_underflow', 'thickener_overflow', 'gbt_underflow', 'gbt_overflow']):
+            st.info("No thickening indicators are confirmed yet. Check **Confirm Data Mapping** above — if your data "
+                    "truly has no thickening columns, that's expected and no values will be invented.")
+
+    # ============================================================
+    # TAB 7: DATA QUALITY
+    # ============================================================
+    with tab7:
+        st.header("🔍 Data Quality Analysis")
+        columns_to_check = [p['column'] for p in detected_params.values() if p['column']]
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Total Records", len(df))
+        with c2:
+            st.metric("Columns Confirmed", len(columns_to_check))
+        with c3:
+            total_missing = sum(df[col].isna().sum() for col in columns_to_check if col in df.columns)
+            st.metric("Total Missing Values", int(total_missing))
+
+        st.divider()
+
+        for col_name in columns_to_check:
+            if col_name in df.columns:
+                with st.expander(f"📊 {col_name}"):
+                    col_data = pd.to_numeric(df[col_name], errors='coerce')
+                    a, b, c = st.columns(3)
+                    with a:
+                        missing = df[col_name].isna().sum()
+                        st.write("**Missing Values:**")
+                        st.write(f"Count: {missing}")
+                        st.write(f"Percentage: {(missing / len(df) * 100):.2f}%")
+                    with b:
+                        st.write("**Data Range:**")
+                        if col_data.notna().any():
+                            st.write(f"Min: {col_data.min():.2f}")
+                            st.write(f"Max: {col_data.max():.2f}")
+                            st.write(f"Mean: {col_data.mean():.2f}")
+                        else:
+                            st.write("No numeric data")
+                    with c:
+                        st.write("**Outliers (IQR):**")
+                        clean = col_data.dropna()
+                        if len(clean) > 0:
+                            Q1, Q3 = clean.quantile(0.25), clean.quantile(0.75)
+                            IQR = Q3 - Q1
+                            outliers = clean[(clean < Q1 - 1.5 * IQR) | (clean > Q3 + 1.5 * IQR)]
+                            st.write(f"Count: {len(outliers)}")
+                            st.write(f"Percentage: {(len(outliers) / len(clean) * 100):.2f}%")
+                        else:
+                            st.write("No numeric data")
+
+    # ============================================================
+    # TAB 8: PARAMETERS
+    # ============================================================
+    with tab8:
+        st.header("📋 Confirmed Parameters & Units")
+        param_data = []
+        for param_name, param_info in detected_params.items():
+            param_data.append({
+                'Category': categorize_param(param_name),
+                'Parameter': param_name,
+                'Column': param_info['column'] if param_info['column'] else '— not detected —',
+                'Unit': param_info['unit'],
+                'Match Score': f"{param_info['score']:.0f}%",
+            })
+        param_df = pd.DataFrame(param_data).sort_values(['Category', 'Parameter'])
+        st.dataframe(param_df, use_container_width=True)
+        csv = param_df.to_csv(index=False)
+        st.download_button("📥 Download Parameters", data=csv, file_name="parameters.csv", mime="text/csv")
+
+    # ============================================================
+    # TAB 9: RAW DATA
+    # ============================================================
+    with tab9:
+        st.header("📥 Raw Data")
+        st.dataframe(df, use_container_width=True)
+        csv = df.to_csv(index=False)
+        st.download_button("📥 Download Data", data=csv, file_name="wwtp_data.csv", mime="text/csv")
+
+st.success("✅ App loaded successfully!")
