@@ -9,12 +9,6 @@ from datetime import date
 warnings.filterwarnings('ignore')
 
 try:
-    import anthropic
-    ANTHROPIC_AVAILABLE = True
-except ImportError:
-    ANTHROPIC_AVAILABLE = False
-
-try:
     import openpyxl
 except ImportError:
     pass
@@ -349,85 +343,6 @@ def render_chart_with_download(fig, key):
                            "bundled headless browser, no extra install step needed) and redeploy/reboot the app.")
 
 
-# ============================================================
-# AI PROCESS ENGINEER ASSISTANT (optional - needs the user's own Anthropic API key)
-# ============================================================
-ENGINEER_MODELS = {
-    "Claude Sonnet 5 (recommended)": "claude-sonnet-5",
-    "Claude Haiku 4.5 (faster/cheaper)": "claude-haiku-4-5-20251001",
-    "Claude Opus 4.8 (most capable)": "claude-opus-4-8",
-}
-
-
-def build_kpi_context_summary(plant_info, dew_kpis, thick_kpis, period_caption=None):
-    """Compact plain-text summary of the plant's current KPIs, for grounding the AI assistant
-    in this specific plant's actual data rather than generic wastewater knowledge."""
-    lines = [f"Plant: {plant_info.get('name', 'WWTP')}"]
-    if plant_info.get('location'):
-        lines.append(f"Location: {plant_info['location']}")
-    if plant_info.get('dewatering_equipment'):
-        lines.append(f"Dewatering equipment: {', '.join(plant_info['dewatering_equipment'])}")
-    if plant_info.get('thickening_equipment'):
-        lines.append(f"Thickening equipment: {', '.join(plant_info['thickening_equipment'])}")
-    if period_caption:
-        lines.append(f"Data period shown: {period_caption}")
-
-    lines.append("\nDewatering KPIs:")
-    for key, defn in DEWATERING_KPI_DEFINITIONS.items():
-        val = dew_kpis.get(key)
-        if val and not val.get('insufficient'):
-            lines.append(f"- {defn['name']}: {val['value']:.3f} {val['unit']} (target: {val.get('target', 'N/A')}, "
-                          f"status: {val.get('status', '').strip()})")
-
-    lines.append("\nThickening KPIs:")
-    for key, defn in THICKENING_KPI_DEFINITIONS.items():
-        val = thick_kpis.get(key)
-        if val and not val.get('insufficient'):
-            lines.append(f"- {defn['name']}: {val['value']:.3f} {val['unit']} (target: {val.get('target', 'N/A')}, "
-                          f"status: {val.get('status', '').strip()})")
-
-    return "\n".join(lines)
-
-
-ENGINEER_SYSTEM_PROMPT_TEMPLATE = """You are an experienced wastewater treatment process engineer, specializing in \
-biosolids dewatering (centrifuges, belt filter presses, rotary/screw presses) and thickening (gravity thickeners, \
-gravity belt thickeners, DAF) operations. You are reviewing live operational data for a specific plant.
-
-Here is the current state of their KPIs, computed from their actual uploaded data:
-
-{context}
-
-When answering:
-- Ground your answers in the specific numbers above when relevant - cite actual values, don't speak generically if \
-the data already tells you something.
-- Give practical, actionable engineering advice: likely root causes, troubleshooting steps, typical industry ranges, \
-and what to check or adjust next.
-- Be honest about the limits of what this data can tell you. If something can't be diagnosed from the KPIs shown, \
-say so plainly and suggest what additional data, test, or field observation would help.
-- Keep answers focused and conversational, like a senior engineer talking through a plant walk-through - not an \
-exhaustive report unless asked for one.
-- If asked something unrelated to wastewater treatment, gently redirect back to the plant/process context.
-"""
-
-
-def call_process_engineer(system_prompt, messages, api_key, model, max_tokens=1200):
-    """Call the Anthropic API with the process-engineer persona. Returns (text, error) where
-    exactly one of the two is None - callers should check `error` first."""
-    if not ANTHROPIC_AVAILABLE:
-        return None, ("The 'anthropic' package isn't installed in this environment. Add `anthropic` to "
-                       "requirements.txt and reboot the app to enable this feature.")
-    if not api_key:
-        return None, "No Anthropic API key provided."
-    try:
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model=model, max_tokens=max_tokens, system=system_prompt, messages=messages,
-        )
-        return response.content[0].text, None
-    except Exception as e:
-        return None, str(e)
-
-
 def status_chip(status_text):
     """Render a KPI/recommendation status string as a colored chip matching the Veolia palette,
     without changing the underlying text the rest of the app string-matches on."""
@@ -551,122 +466,186 @@ THICKENING_KPI_DEFINITIONS = {
 # ============================================================
 RECOMMENDATION_TEMPLATES = {
     'cake_solids': {
-        'issue': 'Cake solids content is outside the target range, affecting hauling costs and disposal efficiency.',
-        'root_causes': ['Insufficient or excessive polymer dose', 'Equipment speed not optimized for current sludge characteristics', 'Feed rate too high for equipment capacity', 'Polymer type not suited to sludge', 'Equipment wear (bowl, belt, scroll, bearings)'],
-        'actions': ['Run a jar test to re-optimize polymer type and dose', 'Adjust equipment speed in small increments and monitor cake solids', 'Review and adjust feed/throughput rate', 'Inspect equipment for wear or mechanical issues'],
-        'additional_data': ['Feed sludge %TS and VS%', 'Equipment speed/torque logs', 'Polymer type and dilution ratio'],
+        'issue': 'Cake solids content reflects how well polymer-conditioned floc resists shear and releases free water under '
+                 'mechanical/pressure dewatering. A shortfall usually traces to floc structure (under/overdose, wrong charge '
+                 'density or molecular weight) or to mechanical energy input exceeding what the conditioned floc can withstand '
+                 '(differential speed/G-force too high for BFP belt tension, or centrifuge bowl speed shearing floc faster than '
+                 'it can compact).',
+        'root_causes': [
+            'Polymer underdosed relative to sludge charge demand (check against CST or jar-test optimum, not just historical dose)',
+            'Polymer overdosed - excess cationic charge re-stabilizes fine particles and can paradoxically reduce capture and cake dryness',
+            'Wrong polymer charge density/molecular weight for current feed (WAS-heavy blends typically need higher charge density than primary-heavy blends)',
+            'Centrifuge differential speed or bowl speed too high, shearing floc before it compacts in the cake zone',
+            'BFP belt tension/pressure zone speed mismatched to floc strength, causing washout in the wedge zone',
+            'Feed solids concentration or VS% has drifted (higher VS% sludge is generally harder to dewater and needs more polymer per ton)',
+            'Scroll/bowl wear increasing differential, or belt wear reducing effective pressure zone dwell time',
+        ],
+        'actions': [
+            'Run a fresh jar test (or bench CST test) to re-establish optimum polymer type and dose against *current* sludge, not last year\'s',
+            'If polymer dose is already at or above target range with poor cake, suspect overdose/wrong product before adding more - try a controlled dose reduction of 10-15% and watch cake solids response',
+            'Step differential speed (centrifuge) or belt speed (BFP) in small increments (2-5%) and hold each step 30-60 min before reading cake solids, to isolate the mechanical vs. chemical contribution',
+            'Pull a feed sample for %TS and VS% if not already tracked - a VS% shift explains dose creep that polymer changes alone won\'t fix',
+            'Inspect scroll tip/bowl wear (centrifuge) or belt/roller wear (BFP) if the trend is a slow multi-month decline rather than a step change',
+        ],
+        'additional_data': ['Feed sludge %TS and VS%', 'Equipment differential speed/torque or belt tension logs', 'Polymer type, charge density, and dilution ratio', 'CST or jar-test bench results'],
         'timeline': '1-2 weeks', 'risk': 'Low - improves operation',
     },
     'dry_wet_ratio': {
-        'issue': 'Dewatering efficiency (dry solids produced relative to total wet cake mass) is below target, meaning more wet cake mass is being hauled per ton of dry solids captured.',
-        'root_causes': ['Cake solids content too low (this moves together with the Cake Solids KPI)', 'Polymer dose/type not optimized', 'Equipment speed or feed rate not optimized'],
-        'actions': ['See the Cake Solids and Polymer recommendations - dry/wet ratio tracks cake solids directly', 'Re-run a polymer jar test', 'Review equipment operating parameters'],
+        'issue': 'Dry/wet ratio is a direct proxy for cake solids - it moves in lockstep because both are driven by the same '
+                 'floc-strength and mechanical-energy factors. A low ratio means more truck volume and tip fees per ton of dry '
+                 'solids actually captured.',
+        'root_causes': ['Cake solids content too low (this is mathematically the same driver, see the Cake Solids diagnosis)', 'Polymer dose/type not optimized for current sludge', 'Equipment speed or feed rate mismatched to floc characteristics'],
+        'actions': ['Treat this and Cake Solids as one diagnosis - fixing cake solids fixes this ratio directly', 'Re-run a polymer jar test against current sludge', 'Review differential speed/belt speed settings against feed rate'],
         'additional_data': ['See Cake Solids KPI'],
         'timeline': '1-2 weeks', 'risk': 'Low',
     },
     'active_polymer_dose': {
-        'issue': 'Active polymer usage is above the efficient operating range, increasing chemical costs.',
-        'root_causes': ['Bowl/belt speed suboptimal', 'Feed rate too high', 'Polymer type/concentration mismatch with sludge', 'Equipment wear', 'Sludge characteristics changed (higher solids, harder to dewater)'],
-        'actions': ['Conduct a polymer jar test to re-optimize dose and product', 'Adjust equipment speed incrementally', 'Reduce feed rate 10-15% and monitor cake quality', 'Inspect equipment for wear'],
-        'additional_data': ['Sludge %TS and VS%', 'Equipment RPM/belt speed', 'Polymer type and active content'],
+        'issue': 'Active polymer dose above the efficient range (5-15 lbs active/ton DS) usually means the floc-forming reaction '
+                 'is running less efficiently than it should - either the polymer/sludge chemistry mismatch, insufficient mixing '
+                 'energy to fully react the polymer before shear, or a genuine increase in the sludge\'s specific charge demand.',
+        'root_causes': [
+            'Bowl/belt speed too high, shearing floc and forcing operators to compensate with more polymer',
+            'Feed rate exceeds the flocculation contact time the conditioning system was sized for',
+            'Polymer emulsion not fully inverted/activated before contacting sludge (check activation/aging tank residence time and mixing energy)',
+            'Polymer type/charge density mismatched to current sludge blend (WAS fraction, digestion type, or industrial contribution change)',
+            'Equipment wear increasing shear (worn scroll tips, bearing play) or reducing effective mixing (worn static mixer, degraded injection ring)',
+            'Sludge VS% or feed solids concentration trending up, increasing specific surface area and charge demand per ton',
+        ],
+        'actions': [
+            'Conduct a polymer jar test across 2-3 competing products/charge densities, not just re-testing the incumbent product at different doses',
+            'Verify polymer activation: check make-down water temperature, aging tank residence time (typically 20-30 min for emulsion products), and mixing energy - under-activated polymer needs more product to get the same effective charge',
+            'Reduce differential/belt speed 5% and hold 30-60 min to see if dose can drop without sacrificing cake solids - shear-driven overdosing is common and easy to miss',
+            'Pull feed %TS/VS% data; if VS% has risen, the dose increase may be a legitimate response to harder-to-dewater sludge, not an equipment problem',
+            'Inspect polymer injection point and static mixer for scale buildup or wear reducing mixing efficiency',
+        ],
+        'additional_data': ['Sludge %TS and VS%', 'Equipment RPM/belt speed and torque trend', 'Polymer type, active content, and activation/aging tank residence time'],
         'timeline': '1-2 weeks', 'risk': 'Medium - monitor cake quality while adjusting',
     },
     'filtrate_turbidity': {
-        'issue': 'Filtrate/centrate clarity is elevated, indicating solids are escaping to the recycle stream.',
-        'root_causes': ['Polymer underdosed', 'Feed rate too high for equipment', 'Screen/bowl wear allowing solids bypass', 'Polymer not fully mixed before dewatering'],
-        'actions': ['Increase polymer dose incrementally and monitor clarity response', 'Check polymer mixing/injection point', 'Inspect screens, bowl, or belt for wear', 'Reduce feed rate if turbidity persists'],
-        'additional_data': ['Polymer mixing energy/injection point details', 'Screen/bowl inspection records'],
+        'issue': 'Filtrate/centrate clarity is a real-time capture-efficiency signal - it responds faster than cake solids to '
+                 'dosing and mechanical changes because it reflects fines that never flocculated into capturable floc, rather than '
+                 'the compaction behavior of floc that did form.',
+        'root_causes': [
+            'Polymer underdosed - insufficient charge neutralization leaves fine colloidal solids unflocculated and free to pass through',
+            'Feed rate spikes exceeding the flocculation/capture capacity of the equipment (check for feed rate variability, not just the daily average)',
+            'Screen, bowl, or belt wear creating a physical bypass path independent of floc quality',
+            'Polymer not fully mixed before the sludge reaches the dewatering zone - insufficient residence time between injection and the machine',
+            'Fine/colloidal fraction of the feed has increased (e.g. a shift toward more WAS or a plant upset upstream)',
+        ],
+        'actions': [
+            'Increase polymer dose in small (~5%) increments and track turbidity response - a rapid improvement confirms underdosing rather than a mechanical bypass',
+            'Check polymer injection point placement and static mixer condition; confirm adequate contact time before the machine (typically several seconds minimum for full flocculation)',
+            'Inspect screens, bowl, or belt for wear that could allow physical bypass regardless of floc quality',
+            'If turbidity persists despite adequate dose and good cake solids, suspect mechanical bypass over chemistry and prioritize equipment inspection',
+            'Review feed rate variability (not just average) - short-duration feed spikes can blow through floc capacity even when average dose looks adequate',
+        ],
+        'additional_data': ['Polymer mixing energy/injection point details and residence time to machine', 'Screen/bowl/belt inspection records', 'Feed rate variability (min/max, not just average)'],
         'timeline': '1-2 weeks', 'risk': 'Low',
     },
     'solids_recovery': {
-        'issue': 'A larger share of incoming solids is being lost to the recycle stream instead of being captured in cake.',
-        'root_causes': ['Polymer dose insufficient', 'Feed rate exceeds equipment capacity', 'Equipment wear', 'Poor polymer-sludge mixing'],
-        'actions': ['Increase polymer dose incrementally', 'Reduce feed/throughput rate', 'Inspect equipment for wear', 'Optimize polymer mixing energy'],
+        'issue': 'Solids recovery is the mass-balance complement to filtrate clarity - it quantifies how much dry solids mass is '
+                 'actually being lost to the recycle stream rather than captured in cake. Below ~95% recovery represents both a '
+                 'direct solids-handling cost and a recycle load back onto liquid treatment.',
+        'root_causes': ['Polymer dose insufficient for the current floc-formation demand', 'Feed rate exceeds equipment hydraulic/solids capacity', 'Equipment wear allowing bypass', 'Poor polymer-sludge mixing reducing effective floc formation'],
+        'actions': ['Increase polymer dose incrementally while tracking recovery, not just cake solids - dose changes can improve one without the other', 'Reduce feed/throughput rate if consistently near rated capacity', 'Inspect equipment for wear allowing solids bypass', 'Optimize polymer mixing energy/injection point'],
         'additional_data': ['Feed solids loading data', 'Recycle stream solids concentration'],
         'timeline': '2-3 weeks', 'risk': 'Low',
     },
     'cake_production_rate': {
-        'issue': 'Cake production rate is outside the typical operating range for this equipment class.',
+        'issue': 'Cake production rate outside the typical operating band for this equipment class usually reflects a feed-rate/design-capacity mismatch rather than a chemistry problem.',
         'root_causes': ['Feed rate mismatched to equipment design capacity', 'Equipment running below/above rated throughput'],
-        'actions': ['Review feed rate against equipment design specs', 'Evaluate whether an additional train needs to be brought online'],
+        'actions': ['Review feed rate against equipment design specs (nameplate capacity, not just historical operating point)', 'Evaluate whether an additional train needs to be brought online if consistently running above rated capacity'],
         'additional_data': ['Equipment design capacity/rated throughput'],
         'timeline': 'Ongoing', 'risk': 'Low',
     },
     'equipment_availability': {
-        'issue': 'Dewatering equipment uptime is below target, risking capacity shortfalls.',
-        'root_causes': ['Unplanned downtime/maintenance', 'Equipment reliability issues', 'Insufficient redundancy/backup units'],
-        'actions': ['Review maintenance logs for recurring failure modes', 'Evaluate preventive maintenance schedule', 'Assess need for backup equipment or spare parts inventory'],
-        'additional_data': ['Maintenance work order history', 'Downtime cause codes'],
+        'issue': 'Dewatering equipment uptime below ~90% risks capacity shortfalls during peak solids loading and forces reliance '
+                 'on fewer trains running harder, which itself tends to push cake quality and polymer efficiency in the wrong direction.',
+        'root_causes': ['Unplanned downtime/maintenance events', 'Recurring mechanical failure mode (bearing, seal, scroll wear) not yet root-caused', 'Insufficient redundancy/backup units for planned maintenance windows'],
+        'actions': ['Pull maintenance work order history and categorize downtime by cause code to find the dominant failure mode, not just total hours down', 'Evaluate whether preventive maintenance intervals match actual wear rates (e.g. scroll/bowl inspection frequency vs. observed wear)', 'Assess spare parts inventory and backup equipment availability for the dominant failure mode identified'],
+        'additional_data': ['Maintenance work order history with downtime cause codes', 'Vibration/wear trend data if available'],
         'timeline': '4-8 weeks', 'risk': 'Medium - reliability risk',
     },
     'cake_moisture': {
-        'issue': 'Cake moisture content is outside the optimal range, affecting handling and disposal costs.',
-        'root_causes': ['Same drivers as Cake Solids (inverse relationship): polymer dose, equipment speed, feed rate'],
-        'actions': ['See the Cake Solids recommendation above - moisture is the inverse of cake solids'],
+        'issue': 'Cake moisture is mathematically the inverse of cake solids, driven by the same floc-strength and mechanical-energy factors.',
+        'root_causes': ['Same drivers as Cake Solids (inverse relationship): polymer dose/type, equipment speed, feed rate'],
+        'actions': ['Treat as the same diagnosis as Cake Solids - improving cake solids improves moisture directly'],
         'additional_data': ['See Cake Solids KPI'],
         'timeline': '1-2 weeks', 'risk': 'Low',
     },
     'polymer_cost_per_lb': {
-        'issue': 'Polymer cost per pound of dry solids processed is above the typical benchmark range.',
-        'root_causes': ['Polymer dose too high for sludge characteristics', 'Polymer unit price above market average', 'Inefficient mixing requiring higher dose'],
-        'actions': ['Re-run polymer jar tests with competing vendors/products', 'Negotiate polymer pricing/contract terms', 'Improve polymer mixing efficiency to lower required dose'],
-        'additional_data': ['Polymer contract pricing', 'Vendor jar test results'],
+        'issue': 'Polymer cost per pound of dry solids is an economic KPI that can be elevated by dose (a process problem) or by '
+                 'unit price (a procurement problem) - these need different fixes, so check which one is driving it before acting.',
+        'root_causes': ['Polymer dose too high for sludge characteristics (see Active Polymer Dose diagnosis)', 'Polymer unit price above current market rate for the product class/volume tier', 'Inefficient mixing requiring higher dose to achieve the same effective charge'],
+        'actions': ['First check whether Active Polymer Dose is also flagged - if so, fix dose/chemistry first since cost will follow', 'If dose is on-target but cost per lb is still high, benchmark unit price against 2-3 competing suppliers for the same product class', 'Improve polymer mixing/activation efficiency to lower the dose needed for equivalent performance'],
+        'additional_data': ['Polymer contract pricing and volume tier', 'Vendor jar test results from competing products'],
         'timeline': '4-6 weeks', 'risk': 'Low',
     },
     'thickened_solids': {
-        'issue': 'Thickened solids concentration is below target, increasing downstream dewatering load.',
-        'root_causes': ['Insufficient retention time', 'Feed rate too high', 'Poor polymer conditioning ahead of thickening', 'Rake/belt mechanism issues', 'Sludge is inherently difficult to thicken'],
-        'actions': ['Reduce feed rate to the thickener', 'Increase retention time if possible', 'Optimize polymer dose for thickening', 'Inspect rake/belt mechanism'],
-        'additional_data': ['Thickener feed rate and retention time', 'Polymer dose used ahead of thickening'],
+        'issue': 'Thickened solids concentration below target increases hydraulic and solids loading onto downstream dewatering, '
+                 'effectively pushing the thickening problem downstream rather than solving it. The underlying mechanism is the '
+                 'same floc-settling/compaction physics as dewatering, just at a lower solids/higher water fraction.',
+        'root_causes': ['Insufficient retention time for gravity settling/compaction to complete', 'Feed rate too high relative to thickener design (hydraulic or solids loading rate)', 'Poor polymer conditioning ahead of thickening (if polymer is used)', 'Rake/belt mechanism issues disrupting the settled blanket or belt cake', 'Sludge is inherently difficult to thicken (e.g. bulking, high VS%, or septic conditions)'],
+        'actions': ['Reduce feed rate to the thickener and confirm against Hydraulic/Solids Loading Rate KPIs whether it\'s within design range', 'Increase retention time if operationally possible (lower feed rate or bring a parallel unit online)', 'Optimize polymer dose specifically for thickening if used - this is often a different dose/product than dewatering polymer', 'Inspect rake mechanism (gravity) or belt/roller condition (GBT) for mechanical disruption of the settling/thickening process'],
+        'additional_data': ['Thickener feed rate and calculated retention time', 'Polymer dose used ahead of thickening', 'Sludge blanket depth/interface if gravity thickener'],
         'timeline': '1-2 weeks', 'risk': 'Low',
     },
     'overflow_turbidity': {
-        'issue': 'Thickener/GBT overflow quality is degraded, indicating solids loss to the return stream.',
-        'root_causes': ['Feed rate too high', 'Polymer underdosed', 'Screen/mesh wear (GBT)', 'Rake speed too high (gravity thickener)'],
-        'actions': ['Reduce feed rate', 'Increase polymer dose incrementally', 'Inspect belt/screen for wear', 'Adjust rake speed'],
+        'issue': 'Thickener/GBT overflow quality degradation is the thickening-stage analog of dewatering filtrate turbidity - '
+                 'solids escaping capture rather than settling/compacting into the underflow.',
+        'root_causes': ['Feed rate too high, exceeding settling/capture capacity', 'Polymer underdosed ahead of thickening (if used)', 'Screen/mesh wear on GBT allowing bypass', 'Rake speed too high on gravity thickener, resuspending settled solids'],
+        'actions': ['Reduce feed rate', 'Increase polymer dose incrementally if used ahead of thickening', 'Inspect belt/screen for wear (GBT) allowing physical bypass', 'Reduce rake speed (gravity thickener) if resuspension is suspected'],
         'additional_data': ['Overflow flow rate', 'Polymer dose ahead of thickening'],
         'timeline': '1-2 weeks', 'risk': 'Low',
     },
     'underflow_production_rate': {
-        'issue': 'Underflow production rate is outside the typical operating range.',
-        'root_causes': ['Feed rate mismatched to equipment capacity', 'Underflow concentration lower/higher than expected'],
-        'actions': ['Review feed rate against thickener design capacity', 'Re-evaluate underflow concentration targets'],
+        'issue': 'Underflow production rate outside the typical range usually reflects a feed-rate/design-capacity mismatch, similar to dewatering cake production rate.',
+        'root_causes': ['Feed rate mismatched to equipment design capacity', 'Underflow concentration lower/higher than expected, changing the mass balance at a given feed rate'],
+        'actions': ['Review feed rate against thickener design capacity', 'Re-evaluate underflow concentration targets against the Thickened Solids KPI - if that\'s also flagged, fix it first'],
         'additional_data': ['Thickener design capacity'],
         'timeline': 'Ongoing', 'risk': 'Low',
     },
     'hydraulic_loading_rate': {
-        'issue': 'Hydraulic loading rate on the thickener surface area is outside the typical design range, which can affect solids capture and underflow quality.',
-        'root_causes': ['Feed flow too high/low relative to available surface area', 'Flow not evenly distributed across multiple units if present'],
-        'actions': ['Review feed flow against thickener design capacity', 'Balance flow across parallel units if available', 'Confirm the surface area entered in Plant Information is correct'],
-        'additional_data': ['Thickener design hydraulic capacity'],
+        'issue': 'Hydraulic loading rate (feed flow per unit surface area) is a core gravity-settling design parameter - running '
+                 'above the design range reduces the time solids have to settle before overflow, directly degrading both underflow '
+                 'concentration and overflow clarity.',
+        'root_causes': ['Feed flow too high relative to available surface area', 'Flow not evenly distributed across multiple parallel units if present, overloading one while others run under capacity'],
+        'actions': ['Review feed flow against thickener design hydraulic capacity (typical gravity thickener design range is 400-800 gpd/sq ft)', 'Balance flow across parallel units if available - check for uneven distribution rather than assuming total flow is the only variable', 'Confirm the surface area entered in Plant Information matches actual as-built dimensions, not nameplate/nominal'],
+        'additional_data': ['Thickener design hydraulic capacity', 'Flow split data if multiple parallel units'],
         'timeline': '2-4 weeks', 'risk': 'Low',
     },
     'solids_loading_rate': {
-        'issue': 'Solids loading rate on the thickener surface area is outside the recommended range.',
-        'root_causes': ['Feed rate too high relative to available surface area', 'Underflow concentration lower than expected, increasing load'],
-        'actions': ['Reduce feed rate or distribute flow across additional units if available', 'Investigate ways to increase underflow concentration'],
-        'additional_data': ['Confirm thickener surface area entered in Plant Information'],
+        'issue': 'Solids loading rate (mass of dry solids applied per unit surface area per day) is the complementary design '
+                 'parameter to hydraulic loading - even at acceptable flow, a high-solids-concentration feed can overload the '
+                 'settling capacity of the same surface area.',
+        'root_causes': ['Feed rate too high relative to available surface area', 'Underflow concentration lower than expected, meaning more volume/mass is passing through per unit of captured solids'],
+        'actions': ['Reduce feed rate or distribute flow across additional units if available', 'Investigate ways to increase underflow concentration (see Thickened Solids diagnosis) since that improves this ratio directly', 'Cross-check against Hydraulic Loading Rate - if both are flagged together, this is a capacity problem; if only solids loading is flagged, suspect feed solids concentration has increased'],
+        'additional_data': ['Confirm thickener surface area entered in Plant Information matches as-built'],
         'timeline': '2-4 weeks', 'risk': 'Low',
     },
     'retention_time': {
-        'issue': 'Retention time in the gravity thickener is below the typical design range, which can limit achievable underflow concentration.',
-        'root_causes': ['Feed flow too high for tank volume', 'Tank volume entered may not reflect actual operating volume (e.g. sludge blanket level)'],
-        'actions': ['Reduce feed rate if possible', 'Verify the tank volume entered in Plant Information', 'Consider distributing flow to additional units if available'],
-        'additional_data': ['Actual operating sludge blanket depth/volume'],
+        'issue': 'Retention time below the typical gravity thickener design range (18-24+ hours) limits the time available for '
+                 'gravity settling and compaction, capping the achievable underflow concentration regardless of polymer or feed quality.',
+        'root_causes': ['Feed flow too high for the tank volume', 'Tank volume entered in Plant Information may not reflect actual operating volume (e.g. sludge blanket occupying part of the tank, or side-water-depth different than assumed)'],
+        'actions': ['Reduce feed rate if operationally possible', 'Verify the tank volume entered in Plant Information against as-built drawings, not assumed nominal capacity', 'Consider distributing flow to additional parallel units if available rather than running one unit past its retention design'],
+        'additional_data': ['Actual operating sludge blanket depth/volume', 'As-built tank dimensions and side-water depth'],
         'timeline': '2-4 weeks', 'risk': 'Low',
     },
     'thickening_polymer_dose': {
-        'issue': 'Thickening polymer consumption is above the typical benchmark range.',
-        'root_causes': ['Polymer dose not optimized for current sludge characteristics', 'Poor mixing efficiency', 'Feed rate too high'],
-        'actions': ['Run a polymer jar test to re-optimize dose', 'Improve polymer mixing/injection point', 'Review feed rate'],
-        'additional_data': ['Sludge characteristics ahead of thickening'],
+        'issue': 'Thickening polymer consumption above the typical 2-6 lbs active/ton DS range for GBT/gravity thickening usually '
+                 'points to the same chemistry-vs-mechanics questions as dewatering polymer, but note thickening polymer selection '
+                 'often differs from dewatering polymer (different charge density/molecular weight optimum for a lower-solids feed).',
+        'root_causes': ['Polymer dose/product not optimized for current sludge characteristics at the thickening solids range (which differs from dewatering feed characteristics)', 'Poor mixing efficiency at the injection point ahead of the thickener', 'Feed rate too high, forcing operators to compensate with more polymer to maintain capture'],
+        'actions': ['Run a polymer jar test specifically at thickening-stage solids concentration - don\'t assume the dewatering-optimized product/dose transfers directly', 'Improve polymer mixing/injection point ahead of the thickener', 'Review feed rate against thickener capacity before assuming a pure chemistry problem'],
+        'additional_data': ['Sludge characteristics ahead of thickening (feed %TS)', 'Polymer product/charge density used for thickening vs. dewatering'],
         'timeline': '1-2 weeks', 'risk': 'Low',
     },
     'thickening_equipment_availability': {
-        'issue': 'Thickening equipment uptime is below target, risking capacity shortfalls upstream of dewatering.',
-        'root_causes': ['Unplanned downtime/maintenance', 'Equipment reliability issues'],
-        'actions': ['Review maintenance logs for recurring failure modes', 'Evaluate preventive maintenance schedule'],
-        'additional_data': ['Maintenance work order history'],
+        'issue': 'Thickening equipment uptime below ~92% risks capacity shortfalls that cascade downstream onto dewatering, since '
+                 'thickening is upstream in the solids handling train.',
+        'root_causes': ['Unplanned downtime/maintenance events', 'Recurring mechanical failure mode not yet root-caused'],
+        'actions': ['Pull maintenance work order history and categorize by cause code to identify the dominant failure mode', 'Evaluate preventive maintenance schedule against actual wear rates observed'],
+        'additional_data': ['Maintenance work order history with downtime cause codes'],
         'timeline': '4-8 weeks', 'risk': 'Medium - reliability risk',
     },
 }
@@ -1916,21 +1895,6 @@ else:
             'thickening_polymer_activity_pct': thickening_polymer_activity_input if thickening_polymer_activity_input > 0 else None,
         }
 
-    with st.sidebar.expander("🧑‍🔬 AI Process Engineer (optional)", expanded=False):
-        if not ANTHROPIC_AVAILABLE:
-            st.caption("Add `anthropic` to requirements.txt and reboot the app to enable the chat assistant and "
-                       "deeper AI commentary on recommendations.")
-        else:
-            st.caption("Powers the 'Ask an Engineer' chat tab and the deeper-analysis buttons on AI Recommendations. "
-                       "Your key is used only for this browser session - it isn't saved to disk, logged, or sent "
-                       "anywhere besides Anthropic's API.")
-            st.text_input("Anthropic API Key", type="password", key="anthropic_api_key",
-                           placeholder="sk-ant-...")
-            st.selectbox("Model", list(ENGINEER_MODELS.keys()), key="engineer_model_label")
-
-    engineer_api_key = st.session_state.get("anthropic_api_key", "")
-    engineer_model = ENGINEER_MODELS.get(st.session_state.get("engineer_model_label"), "claude-sonnet-5")
-
     # ------------------------------------------------------
     # PARAMETER DETECTION + CONFIRM/EDIT MAPPING
     # ------------------------------------------------------
@@ -1960,8 +1924,8 @@ else:
     correlation_analyzer = CorrelationAnalyzer(df, detected_params)
     chart_renderer = ChartRenderer(df)
 
-    tab1, tab2, tab2b, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
-        "📊 Dashboard", "💡 AI Recommendations", "💬 Ask an Engineer", "📈 Trend / Benchmark", "🔗 Correlation Analysis",
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+        "📊 Dashboard", "💡 AI Recommendations", "📈 Trend / Benchmark", "🔗 Correlation Analysis",
         "🔄 Dewatering", "🌀 Thickening", "🔍 Data Quality", "📋 Parameters", "📥 Raw Data",
     ])
 
@@ -2061,10 +2025,7 @@ else:
         thick_kpis = kpi_calculator.calculate_thickening_kpis()
         recommendations, good_items = analyzer.generate_recommendations(dew_kpis, thick_kpis)
 
-        if ANTHROPIC_AVAILABLE and engineer_api_key:
-            rec_kpi_context = build_kpi_context_summary(plant_info, dew_kpis, thick_kpis)
-
-        for rec_idx, rec in enumerate(recommendations):
+        for rec in recommendations:
             with st.container():
                 col_h1, col_h2 = st.columns([3, 1])
                 with col_h1:
@@ -2104,44 +2065,6 @@ else:
                     for item in rec['additional_data_needed']:
                         st.write(f"• {item}")
 
-                if ANTHROPIC_AVAILABLE and engineer_api_key:
-                    commentary_key = f"engineer_commentary_{rec_idx}_{rec['category']}"
-                    cached = st.session_state.get(commentary_key)
-                    if cached:
-                        with st.expander("🧑‍🔬 AI Process Engineer's Deeper Analysis", expanded=True):
-                            st.markdown(cached)
-                            if st.button("🔄 Regenerate", key=f"regen_{commentary_key}"):
-                                del st.session_state[commentary_key]
-                                st.rerun()
-                    else:
-                        if st.button("🧑‍🔬 Get Deeper Engineering Analysis", key=f"btn_{commentary_key}"):
-                            rec_prompt = (
-                                f"Give a deeper engineering analysis of this specific flagged KPI, beyond the "
-                                f"templated summary already shown to the operator:\n\n"
-                                f"Metric: {rec['metric']}\nCurrent: {rec['current_value']} | Target: {rec['target_value']}\n"
-                                f"Issue: {rec['issue']}\nRoot causes already listed: {'; '.join(rec['root_causes'])}\n"
-                                f"Actions already listed: {'; '.join(rec['actions'])}\n\n"
-                                f"Don't just repeat the above - add engineering nuance: which root cause is most likely "
-                                f"given the plant's other KPIs below, what to check first, and any interactions between "
-                                f"this metric and others worth flagging."
-                            )
-                            with st.spinner("Consulting the process engineer..."):
-                                reply, error = call_process_engineer(
-                                    ENGINEER_SYSTEM_PROMPT_TEMPLATE.format(context=rec_kpi_context),
-                                    [{"role": "user", "content": rec_prompt}],
-                                    engineer_api_key, engineer_model,
-                                )
-                            if error:
-                                st.error(f"Couldn't reach the AI assistant: {error}")
-                            else:
-                                st.session_state[commentary_key] = reply
-                                st.rerun()
-                elif not ANTHROPIC_AVAILABLE:
-                    pass
-                else:
-                    st.caption("💡 Add your Anthropic API key in the sidebar (🧑‍🔬 AI Process Engineer) to get a "
-                               "deeper engineering analysis of this specific issue.")
-
                 st.divider()
 
         if good_items:
@@ -2150,55 +2073,6 @@ else:
                     st.markdown(f"**{name}:** {val['value']:.2f} {val['unit']} &nbsp; {status_chip(val.get('status', ''))}", unsafe_allow_html=True)
                     if val.get('basis'):
                         st.caption(val['basis'])
-
-    # ============================================================
-    # TAB 2b: ASK AN ENGINEER (chat)
-    # ============================================================
-    with tab2b:
-        st.header("💬 Ask an Engineer")
-        st.write("A conversational assistant grounded in your plant's actual computed KPIs - ask it to interpret "
-                 "results, troubleshoot an issue, or explain what a metric means for your operation.")
-
-        if not ANTHROPIC_AVAILABLE:
-            st.warning("This feature needs the `anthropic` Python package. Add `anthropic` to requirements.txt "
-                       "and reboot the app to enable it.")
-        elif not engineer_api_key:
-            st.info("👈 Enter your Anthropic API key in the sidebar under **🧑‍🔬 AI Process Engineer** to start "
-                    "chatting. The key is only kept for this browser session - it's never saved or logged.")
-        else:
-            if "engineer_chat_history" not in st.session_state:
-                st.session_state.engineer_chat_history = []
-
-            chat_dew_kpis = kpi_calculator.calculate_dewatering_kpis()
-            chat_thick_kpis = kpi_calculator.calculate_thickening_kpis()
-            kpi_context = build_kpi_context_summary(plant_info, chat_dew_kpis, chat_thick_kpis)
-            system_prompt = ENGINEER_SYSTEM_PROMPT_TEMPLATE.format(context=kpi_context)
-
-            top_col1, top_col2 = st.columns([5, 1])
-            with top_col2:
-                if st.button("🗑️ Clear Chat", use_container_width=True):
-                    st.session_state.engineer_chat_history = []
-                    st.rerun()
-
-            for msg in st.session_state.engineer_chat_history:
-                with st.chat_message(msg["role"]):
-                    st.markdown(msg["content"])
-
-            user_question = st.chat_input("Ask about your dewatering/thickening performance...")
-            if user_question:
-                st.session_state.engineer_chat_history.append({"role": "user", "content": user_question})
-                with st.chat_message("user"):
-                    st.markdown(user_question)
-
-                with st.chat_message("assistant"):
-                    with st.spinner("Thinking..."):
-                        api_messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.engineer_chat_history]
-                        reply, error = call_process_engineer(system_prompt, api_messages, engineer_api_key, engineer_model)
-                    if error:
-                        st.error(f"Couldn't reach the AI assistant: {error}")
-                    else:
-                        st.markdown(reply)
-                        st.session_state.engineer_chat_history.append({"role": "assistant", "content": reply})
 
     # ============================================================
     # TAB 3: TREND / BENCHMARK ANALYSIS
