@@ -1,47 +1,349 @@
+"""
+Shared engine for the Hubgrade WWTP Process Analyzer Suite.
+Every process page (Dewatering & Thickening, Coagulant Addition, Disinfection, ...)
+imports from this module so the look, feel, and core detection/analysis logic stay
+consistent without duplicating code across pages.
+"""
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import date
-import warnings
-warnings.filterwarnings('ignore')
-
-import sys, os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from common import (
-    VEOLIA, inject_theme, render_header, status_chip, priority_chip,
-    format_threshold_footnote as _format_threshold_footnote,
-    PLOTLY_CONFIG, render_chart_with_download,
-    load_process_csv, detect_parameters as _detect_parameters,
-    render_mapping_editor as _render_mapping_editor,
-    CorrelationAnalyzer, ChartRenderer, render_kpi_grid,
-    BaseKPICalculator, BaseRecommendationEngine, render_recommendations_tab,
-)
+import plotly.graph_objects as go
+from fuzzywuzzy import fuzz
+import os
 
 # ============================================================
-# PAGE CONFIGURATION
+# COLOR PALETTE (Veolia brand colors, from the public 2024 graphic charter)
 # ============================================================
-st.set_page_config(
-    page_title="Disinfection Analyzer",
-    page_icon="🦠",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-inject_theme()
-render_header("🦠 AI-Powered Disinfection Performance Analyzer")
-
-# ============================================================
-# PERFORMANCE THRESHOLDS
-# ============================================================
-PERFORMANCE_THRESHOLDS = {
-    'chlorine_residual_precontact': {'excellent': (1.0, float('inf')), 'good': (0.5, 1.0), 'moderate': (0.2, 0.5), 'poor': (0, 0.2)},
-    'chlorine_residual_final': {'excellent': (0, 0.05), 'good': (0.05, 0.1), 'moderate': (0.1, 0.2), 'poor': (0.2, float('inf'))},
-    'uv_dose': {'excellent': (40, float('inf')), 'good': (30, 40), 'moderate': (20, 30), 'poor': (0, 20)},
-    'disinfection_equipment_availability': {'excellent': (98, float('inf')), 'good': (95, 98), 'moderate': (90, 95), 'poor': (0, 90)},
+VEOLIA = {
+    'red': '#FF0000',
+    'marine': '#002D62',
+    'turquoise': '#05C3DD',
+    'sky_blue': '#8DACCD',
+    'pale_blue': '#99E1EF',
+    'green': '#78BE21',
+    'forest_green': '#438D42',
+    'apricot': '#FFAC00',
+    'orange': '#FF6900',
+    'purple': '#772583',
+    'yellow': '#FFD616',
+    'pale_green': '#C1DB8A',
+    'apple_green': '#C7D64F',
+    'pale_yellow': '#FFED99',
+    'lavender': '#B092BD',
+    'white': '#FFFFFF',
+    'ink_light': '#5A6B7A',
 }
 
 
-def render_footnote(metric_key, unit="", fallback=None):
-    txt = _format_threshold_footnote(PERFORMANCE_THRESHOLDS, metric_key, unit)
+def inject_theme():
+    """Injects the shared Veolia-palette CSS. Call once near the top of every page script
+    (Streamlit re-runs CSS injection per page in a multi-page app, so this must be called
+    on each page, not just once globally)."""
+    st.markdown(f"""
+    <style>
+        .stApp {{
+            background-color: #F6F9FA;
+        }}
+        h1, h2, h3 {{
+            color: {VEOLIA['marine']} !important;
+            font-weight: 700 !important;
+        }}
+        h3 {{
+            border-bottom: 2px solid {VEOLIA['pale_blue']};
+            padding-bottom: 6px;
+        }}
+        p, div, span, label {{
+            color: {VEOLIA['marine']};
+        }}
+
+        /* --- Header banner --- */
+        .hub-header {{
+            background: linear-gradient(90deg, {VEOLIA['marine']} 0%, #003D7A 100%);
+            border-radius: 10px;
+            padding: 22px 28px;
+            margin-bottom: 22px;
+            display: flex;
+            align-items: center;
+            gap: 22px;
+            box-shadow: 0 2px 10px rgba(0,45,98,0.25);
+        }}
+        .hub-wordmark {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding-right: 22px;
+            border-right: 1px solid rgba(255,255,255,0.25);
+        }}
+        .hub-wordmark-dot {{
+            width: 14px; height: 14px; border-radius: 50%;
+            background: {VEOLIA['turquoise']};
+            box-shadow: 0 0 0 4px rgba(5,195,221,0.25);
+        }}
+        .hub-wordmark-text {{
+            font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
+            font-size: 22px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            color: {VEOLIA['white']};
+        }}
+        .hub-title-text {{
+            color: {VEOLIA['white']} !important;
+            font-size: 24px;
+            font-weight: 700;
+            margin: 0 0 4px 0;
+            line-height: 1.3;
+            font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
+        }}
+        .hub-subtitle-text {{
+            color: {VEOLIA['pale_blue']} !important;
+            margin: 0;
+            font-size: 14px;
+        }}
+        .hub-title-text-light {{
+            color: {VEOLIA['marine']} !important;
+            font-size: 24px;
+            font-weight: 700;
+            margin: 0 0 4px 0;
+            line-height: 1.3;
+            font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
+        }}
+
+        /* --- Metrics (KPI cards) --- */
+        [data-testid="stMetric"] {{
+            background: {VEOLIA['white']};
+            border: 1px solid #E1E9EE;
+            border-left: 4px solid {VEOLIA['turquoise']};
+            border-radius: 8px;
+            padding: 12px 14px 10px 14px;
+            box-shadow: 0 1px 3px rgba(0,45,98,0.06);
+            min-height: 92px;
+        }}
+        [data-testid="stMetricLabel"] {{
+            color: {VEOLIA['ink_light']} !important;
+            font-size: 11.5px !important;
+            font-weight: 600 !important;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: unset !important;
+            line-height: 1.3 !important;
+        }}
+        [data-testid="stMetricLabel"] p {{
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: unset !important;
+            line-height: 1.3 !important;
+        }}
+        [data-testid="stMetricValue"] {{
+            color: {VEOLIA['marine']} !important;
+            font-weight: 700 !important;
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: unset !important;
+            font-size: 1.5rem !important;
+            line-height: 1.25 !important;
+        }}
+
+        /* --- Tabs --- */
+        .stTabs [data-baseweb="tab-list"] {{
+            gap: 4px;
+            border-bottom: 2px solid #E1E9EE;
+        }}
+        .stTabs [data-baseweb="tab"] {{
+            color: {VEOLIA['ink_light']};
+            font-weight: 600;
+            padding: 8px 16px;
+        }}
+        .stTabs [aria-selected="true"] {{
+            color: {VEOLIA['marine']} !important;
+            border-bottom: 3px solid {VEOLIA['turquoise']} !important;
+        }}
+
+        /* --- Buttons --- */
+        .stButton>button, .stDownloadButton>button {{
+            background-color: {VEOLIA['marine']} !important;
+            border: none !important;
+            border-radius: 6px !important;
+            font-weight: 600 !important;
+        }}
+        .stButton>button, .stButton>button *,
+        .stDownloadButton>button, .stDownloadButton>button * {{
+            color: {VEOLIA['white']} !important;
+        }}
+        .stButton>button:hover, .stDownloadButton>button:hover,
+        .stButton>button:hover *, .stDownloadButton>button:hover * {{
+            background-color: {VEOLIA['turquoise']} !important;
+            color: {VEOLIA['marine']} !important;
+        }}
+
+        /* --- Expanders --- */
+        [data-testid="stExpander"] {{
+            border: 1px solid #E1E9EE !important;
+            border-radius: 8px !important;
+            background: {VEOLIA['white']};
+        }}
+
+        /* --- Sidebar --- */
+        section[data-testid="stSidebar"] {{
+            background-color: {VEOLIA['marine']};
+        }}
+        section[data-testid="stSidebar"] * {{
+            color: {VEOLIA['white']} !important;
+        }}
+        section[data-testid="stSidebar"] [data-testid="stExpander"] {{
+            background: rgba(255,255,255,0.06);
+            border-color: rgba(255,255,255,0.15) !important;
+        }}
+        section[data-testid="stSidebar"] input, section[data-testid="stSidebar"] textarea {{
+            color: {VEOLIA['marine']} !important;
+        }}
+        section[data-testid="stSidebar"] [data-testid="stFileUploaderFile"],
+        section[data-testid="stSidebar"] [data-testid="stFileUploaderFileName"] {{
+            background: rgba(255,255,255,0.14) !important;
+            border-radius: 6px;
+            padding: 4px 8px;
+        }}
+        section[data-testid="stSidebar"] [data-testid="stFileUploaderFile"] * {{
+            color: {VEOLIA['white']} !important;
+            overflow: visible !important;
+            text-overflow: unset !important;
+            white-space: normal !important;
+            word-break: break-word !important;
+        }}
+        section[data-testid="stSidebar"] [data-testid="stFileUploaderFile"] svg {{
+            fill: {VEOLIA['white']} !important;
+        }}
+        section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {{
+            background: {VEOLIA['white']} !important;
+            border: 2px dashed rgba(255,255,255,0.4);
+            border-radius: 8px;
+        }}
+        section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] * {{
+            color: {VEOLIA['marine']} !important;
+        }}
+        section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button {{
+            background: {VEOLIA['turquoise']} !important;
+            color: {VEOLIA['marine']} !important;
+            border: none !important;
+            font-weight: 600 !important;
+        }}
+
+        /* --- Dataframes --- */
+        [data-testid="stDataFrame"] {{
+            border: 1px solid #E1E9EE;
+            border-radius: 6px;
+        }}
+
+        /* --- Dividers --- */
+        hr {{
+            border-top: 1px solid #E1E9EE !important;
+        }}
+
+        /* --- Status chips --- */
+        .status-chip {{
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12.5px;
+            font-weight: 700;
+        }}
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def render_header(subtitle, logo_filename="hubgrade_logo.png"):
+    """Renders the Hubgrade banner + page title. `subtitle` should be the process module's
+    own title, e.g. 'Coagulant Addition Performance Analyzer'."""
+    this_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in dir() else '.'
+    logo_path = os.path.join(this_dir, logo_filename)
+
+    with st.container():
+        if os.path.exists(logo_path):
+            hcol1, hcol2 = st.columns([1, 5])
+            with hcol1:
+                st.image(logo_path, width=140)
+            with hcol2:
+                st.markdown(f"""
+                <div style="padding-top:8px;">
+                    <div class="hub-title-text-light">{subtitle}</div>
+                    <p style="color:{VEOLIA['ink_light']}; margin:0;">Fuzzy Parameter Detection | Confirm-Before-You-Analyze | Period A/B Benchmark | AI Recommendations</p>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div class="hub-header">
+                <div class="hub-wordmark">
+                    <div class="hub-wordmark-dot"></div>
+                    <div class="hub-wordmark-text">HUBGRADE</div>
+                </div>
+                <div>
+                    <div class="hub-title-text">{subtitle}</div>
+                    <div class="hub-subtitle-text">Fuzzy Parameter Detection · Confirm-Before-You-Analyze · Period A/B Benchmark · AI Recommendations</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+
+def status_chip(status_text):
+    """Render a KPI/recommendation status string as a colored chip matching the Veolia palette,
+    without changing the underlying text that calling code string-matches on."""
+    if not status_text:
+        return ""
+    if 'On Target' in status_text or '✅' in status_text:
+        bg, fg = '#EAF4DD', VEOLIA['forest_green']
+    elif 'Below Target' in status_text or '🔴' in status_text:
+        bg, fg = '#FFE3E3', VEOLIA['red']
+    elif 'Above Target' in status_text or '🟠' in status_text:
+        bg, fg = '#FFEFD9', VEOLIA['orange']
+    elif 'Informational' in status_text or 'ℹ️' in status_text:
+        bg, fg = '#E7F2F8', VEOLIA['marine']
+    else:
+        bg, fg = '#EEF3F6', VEOLIA['ink_light']
+    label = status_text.replace('✅', '').replace('🔴', '').replace('🟠', '').replace('ℹ️', '').strip()
+    return f'<span class="status-chip" style="background:{bg}; color:{fg};">{label}</span>'
+
+
+def priority_chip(priority_text):
+    """Render a recommendation priority (CRITICAL/HIGH/MEDIUM/OPTIMAL) as a colored chip."""
+    if 'CRITICAL' in priority_text:
+        bg, fg = '#FFE3E3', VEOLIA['red']
+    elif 'HIGH' in priority_text:
+        bg, fg = '#FFEFD9', VEOLIA['orange']
+    elif 'MEDIUM' in priority_text:
+        bg, fg = '#FFF7DB', '#9A7B00'
+    elif 'OPTIMAL' in priority_text:
+        bg, fg = '#EAF4DD', VEOLIA['forest_green']
+    else:
+        bg, fg = '#EEF3F6', VEOLIA['ink_light']
+    label = priority_text.replace('🔴', '').replace('🟠', '').replace('🟡', '').replace('✅', '').strip()
+    return f'<span class="status-chip" style="background:{bg}; color:{fg};">{label}</span>'
+
+
+# ============================================================
+# THRESHOLD FOOTNOTES
+# ============================================================
+def format_threshold_footnote(thresholds_dict, metric_key, unit=""):
+    if metric_key not in thresholds_dict:
+        return None
+    thresholds = thresholds_dict[metric_key]
+    order = ['excellent', 'good', 'moderate', 'poor']
+    icons = {'excellent': '🟢', 'good': '🟡', 'moderate': '🟠', 'poor': '🔴'}
+    parts = []
+    for level in order:
+        lo, hi = thresholds[level]
+        if lo == 0:
+            text = f"<{hi:g}{unit}"
+        elif hi == float('inf'):
+            text = f"≥{lo:g}{unit}"
+        else:
+            text = f"{lo:g}–{hi:g}{unit}"
+        parts.append(f"{icons[level]} **{level.title()}**: {text}")
+    return " &nbsp;|&nbsp; ".join(parts)
+
+
+def render_footnote(thresholds_dict, metric_key, unit="", fallback=None):
+    txt = format_threshold_footnote(thresholds_dict, metric_key, unit)
     if txt:
         st.caption(f"📊 Performance benchmark — {txt}")
     elif fallback:
@@ -49,837 +351,646 @@ def render_footnote(metric_key, unit="", fallback=None):
 
 
 # ============================================================
-# KPI DEFINITIONS
+# PLOTLY CHART DOWNLOAD HELPER
 # ============================================================
-DISINFECTION_KPI_DEFINITIONS = {
-    'chlorine_dose': {'name': 'Chlorine Dose (mg/L)', 'description': 'Chlorine (as Cl2) applied per unit volume treated. Reported informationally — required dose depends heavily on chlorine demand of the wastewater, which this app cannot measure directly.'},
-    'chlorine_residual_precontact': {'name': 'Chlorine Residual - Pre-Dechlorination (mg/L)', 'description': 'Residual chlorine at/near the end of the contact tank, before dechlorination. This is the value that actually drives CT (disinfection) credit.'},
-    'chlorine_residual_final': {'name': 'Chlorine Residual - Final Effluent (mg/L)', 'description': 'Residual chlorine after dechlorination, at discharge. Most permits require this to be very low to near-zero to protect aquatic life.'},
-    'contact_time': {'name': 'Contact Time (minutes)', 'description': 'Hydraulic detention time in the disinfection contact tank/channel.'},
-    'ct_value': {'name': 'CT Value (mg/L·min)', 'description': 'Concentration × Time — the standard disinfection compliance metric for chlorine systems. Required CT varies by regulation, temperature, and pH; reported informationally.'},
-    'uv_dose': {'name': 'UV Dose (mJ/cm²)', 'description': 'Delivered UV dose. Many state guidance documents cite ≥30 mJ/cm² as a common minimum for disinfection credit — verify your specific permit requirement.'},
-    'uv_transmittance': {'name': 'UV Transmittance (%UVT)', 'description': 'Water clarity at the UV wavelength. Typical secondary effluent runs 55-75% UVT; lower UVT reduces delivered dose for a given lamp output.'},
-    'effluent_bacteria': {'name': 'Effluent Bacteria (CFU or MPN/100mL)', 'description': 'Fecal coliform, E. coli, or enterococci as logged. Compare against your specific discharge permit limit, which this app does not know.'},
-    'dechlor_dose': {'name': 'Dechlorination Chemical Dose (mg/L)', 'description': 'Sulfur dioxide or sodium bisulfite (or similar) dose used to neutralize residual chlorine before discharge.'},
-    'disinfectant_cost_per_mg': {'name': 'Disinfectant Cost per MG Treated ($/MG)', 'description': 'Economic indicator of disinfection chemical/power cost normalized to flow treated.'},
-    'flow_disinfected': {'name': 'Flow Disinfected (MGD)', 'description': 'Flow rate through the disinfection process.'},
-    'disinfection_equipment_availability': {'name': 'Disinfection Equipment Availability (%)', 'description': 'Uptime percentage of disinfection equipment (chlorinator, UV bank, or ozone generator). Disinfection is typically a permit-critical process with little tolerance for downtime.'},
-    'chlorine_feed_rate': {'name': 'Chlorine Feed Rate (lbs/day or gpd)', 'description': 'Feed rate of chlorine or hypochlorite solution.'},
-    'ozone_dose': {'name': 'Ozone Dose (mg/L)', 'description': 'Ozone applied per unit volume treated, if ozone disinfection is used.'},
-}
-
-# ============================================================
-# RECOMMENDATION TEMPLATES + PRIORITY MAP
-# ============================================================
-RECOMMENDATION_TEMPLATES = {
-    'chlorine_residual_precontact': {
-        'issue': 'Chlorine residual ahead of dechlorination is the value that actually drives CT (concentration × time) '
-                 'disinfection credit - a low residual here means inadequate pathogen inactivation is likely occurring '
-                 'regardless of how the dose is set, since demand (not dose) determines how much residual survives to '
-                 'do disinfection work.',
-        'root_causes': [
-            'Chlorine demand of the wastewater has increased (higher ammonia, organics, or industrial loading consuming chlorine before it can act as a disinfectant residual)',
-            'Feed dose set too low for current demand - dose and demand are not the same thing, and demand can drift independently of flow',
-            'Feed equipment underperforming (pump calibration, gas feeder issue, hypochlorite degradation in storage - hypochlorite loses strength over time, faster in heat/sunlight)',
-            'Contact tank short-circuiting reducing effective contact even if dose/residual at the sample point look adequate',
-        ],
-        'actions': [
-            'Check influent ammonia-nitrogen trend - breakpoint chlorination demand rises sharply with ammonia, and this is a very common driver of "unexplained" residual drops',
-            'Verify feed equipment calibration and, for hypochlorite, confirm stored solution strength hasn\'t degraded (test % available chlorine against the delivery certificate)',
-            'Increase dose incrementally and confirm residual responds proportionally - a flat response despite dose increases points to a demand or equipment issue, not a dose-setpoint issue',
-            'If using hypochlorite, review storage conditions (temperature, sunlight exposure, age) - degradation is a frequently overlooked cause of "the same dose stopped working"',
-        ],
-        'additional_data': ['Influent ammonia-nitrogen trend', 'Hypochlorite storage tank age/conditions if applicable', 'Feed equipment calibration log'],
-        'timeline': '1 week - this affects disinfection compliance', 'risk': 'High - potential compliance/public health issue',
-    },
-    'chlorine_residual_final': {
-        'issue': 'Elevated final effluent chlorine residual after dechlorination is a common cause of aquatic toxicity '
-                 'permit exceedances - chlorine and its byproducts are toxic to aquatic life at very low concentrations, '
-                 'which is why most permits require near-complete dechlorination.',
-        'root_causes': ['Dechlorination chemical dose insufficient for the actual pre-dechlorination residual (which may be varying more than the dechlorination feed is tracking)', 'Dechlorination feed not flow- or residual-paced, so it doesn\'t track chlorine residual swings', 'Insufficient mixing/contact time for the dechlorination reaction to complete', 'Dechlorination feed equipment issue (similar failure modes to chlorine feed - calibration, chemical strength)'],
-        'actions': ['Compare the dechlorination dose trend against the pre-dechlorination chlorine residual trend - if the latter varies but the former doesn\'t track it, that\'s the fix', 'Consider residual-paced (rather than flow-paced only) dechlorination control if not already in place', 'Verify adequate mixing at the dechlorination injection point'],
-        'additional_data': ['Pre-dechlorination chlorine residual trend for comparison', 'Dechlorination control strategy (flow-paced vs. residual-paced)'],
-        'timeline': '1-2 weeks - potential permit compliance issue', 'risk': 'High - potential aquatic toxicity/compliance issue',
-    },
-    'uv_dose': {
-        'issue': 'UV dose below common regulatory minimums (many states cite ≥30 mJ/cm² - verify your specific permit) '
-                 'risks inadequate pathogen inactivation. UV dose is a function of both lamp output/intensity and the '
-                 'water\'s UV transmittance, so a dose shortfall can come from either side.',
-        'root_causes': ['UV transmittance has dropped (higher effluent color/organics/TSS absorbing UV light before it reaches target organisms)', 'Lamp output declining (lamp aging - UV output typically derates over lamp life and is usually rated for a specific service life)', 'Quartz sleeve fouling reducing UV transmission from lamp to water', 'Flow rate too high for the validated dose-delivery curve of the UV system at current UVT'],
-        'actions': ['Check UV Transmittance KPI - if it has dropped, the fix may be upstream (better upstream solids/organics removal) rather than the UV system itself', 'Review lamp age against rated service life and replacement schedule', 'Inspect/clean quartz sleeves if fouling is suspected (mineral scale, biofilm)', 'Confirm flow rate is within the system\'s validated dose curve at current UVT - some systems throttle dose delivery at high flow'],
-        'additional_data': ['UV transmittance trend', 'Lamp age/hours since installation', 'Quartz sleeve cleaning schedule and last-cleaned date'],
-        'timeline': '1-2 weeks - potential compliance issue', 'risk': 'High - potential compliance/public health issue',
-    },
-    'disinfection_equipment_availability': {
-        'issue': 'Disinfection equipment downtime is a direct public health/compliance risk in a way most other unit '
-                 'processes are not - there is typically no buffering capacity, and many permits treat any disinfection '
-                 'downtime during flow as a reportable event.',
-        'root_causes': ['Unplanned equipment failure (chlorinator, UV bank, or ozone generator)', 'Insufficient redundancy for maintenance windows (single train, no standby capacity)', 'Recurring failure mode not yet root-caused'],
-        'actions': ['Pull maintenance work order history and categorize by cause code to find the dominant failure mode', 'Evaluate standby/redundant capacity - given the compliance criticality of this process, redundancy standards here are typically higher than for other unit processes', 'Prioritize root-causing any recurring failure mode given the compliance stakes'],
-        'additional_data': ['Maintenance work order history with downtime cause codes', 'Standby/redundant equipment configuration'],
-        'timeline': '2-4 weeks - high priority given compliance criticality', 'risk': 'High - direct compliance/public health risk during downtime',
-    },
-    'disinfectant_cost_per_mg': {
-        'issue': 'Disinfectant cost per MG treated elevated by either dose (a process/demand problem) or unit price (a '
-                 'procurement problem) - check the residual/dose KPIs first to see which is driving it.',
-        'root_causes': ['Dose above what\'s needed for the chlorine/UV/ozone demand actually present', 'Chemical unit price above current market rate'],
-        'actions': ['If chlorine residual is well above the excellent threshold, dose may be higher than needed - a controlled reduction with residual monitoring can cut cost without compromising disinfection', 'If dose/residual look appropriate, benchmark chemical pricing against competing suppliers'],
-        'additional_data': ['Chlorine/UV power/ozone contract pricing'],
-        'timeline': '4-6 weeks', 'risk': 'Low',
-    },
-}
-
-PRIORITY_MAP = {
-    'chlorine_residual_precontact': '🔴 CRITICAL', 'chlorine_residual_final': '🔴 CRITICAL',
-    'uv_dose': '🔴 CRITICAL', 'disinfection_equipment_availability': '🟠 HIGH',
-    'disinfectant_cost_per_mg': '🟡 MEDIUM',
+PLOTLY_CONFIG = {
+    'displaylogo': False,
+    'toImageButtonOptions': {'format': 'png', 'scale': 2, 'filename': 'chart'},
+    'modeBarButtonsToAdd': ['toImage'],
 }
 
 
-def estimate_savings(key, val):
-    if key in ('chlorine_residual_precontact', 'chlorine_residual_final', 'uv_dose', 'disinfection_equipment_availability'):
-        return ("Compliance risk reduction", "This KPI is about disinfection adequacy/compliance rather than direct cost savings - the primary value of fixing it is avoiding a permit exceedance or public health risk, not a dollar figure this app can estimate.")
-    return ("Improves process efficiency", "Specific dollar savings require site-specific cost data not available from the uploaded dataset.")
+def render_chart_with_download(fig, key):
+    """Render a Plotly chart, plus an explicit download button under its bottom-right corner.
+    Tries a PNG export first (needs 'kaleido'; kaleido>=1.0 also needs a separately-installed
+    Chrome browser - pin kaleido==0.2.1 in requirements.txt to avoid that). Falls back to an
+    interactive HTML download instead of breaking the app, and shows the real error so the
+    cause is diagnosable."""
+    st.plotly_chart(fig, use_container_width=True, key=key, config=PLOTLY_CONFIG)
+    spacer, dl_col = st.columns([6, 1])
+    with dl_col:
+        try:
+            img_bytes = fig.to_image(format="png", scale=2)
+            st.download_button("⬇️ Download Chart", data=img_bytes, file_name=f"{key}.png", mime="image/png",
+                                key=f"dl_{key}", use_container_width=True, help="Download this chart as a PNG image.")
+        except Exception as e:
+            html_bytes = fig.to_html(full_html=True, include_plotlyjs='cdn').encode('utf-8')
+            st.download_button("⬇️ Download Chart", data=html_bytes, file_name=f"{key}.html", mime="text/html",
+                                key=f"dl_{key}", use_container_width=True,
+                                help=f"PNG export failed, downloading an interactive HTML chart instead. Reason: {e}")
+            with st.expander("Why HTML instead of PNG?", expanded=False):
+                st.caption(f"PNG export error: `{e}`")
+                st.caption("Most common cause: kaleido>=1.0 dropped its bundled Chromium and now needs a separate "
+                           "browser install. Fix: pin `kaleido==0.2.1` in requirements.txt (last version with a "
+                           "bundled headless browser, no extra install step needed) and redeploy/reboot the app.")
 
 
 # ============================================================
-# PARAMETER KEYWORDS
+# FUZZY PARAMETER DETECTOR (generic - works for any process's keyword system)
 # ============================================================
-PARAMETER_KEYWORDS = {
-    'chlorine_dose': ['chlorine dose mg l', 'cl2 dose', 'sodium hypochlorite dose', 'chlorine applied dose'],
-    'chlorine_residual_precontact': ['chlorine residual mg l', 'total residual chlorine', 'free chlorine residual', 'contact tank residual chlorine'],
-    'chlorine_residual_final': ['final chlorine residual', 'effluent chlorine residual', 'discharge chlorine residual', 'residual chlorine after dechlorination'],
-    'contact_time': ['contact time minutes', 'chlorine contact time', 'detention time disinfection'],
-    'uv_dose': ['uv dose mj cm2', 'uv dose', 'ultraviolet dose'],
-    'uv_transmittance': ['uv transmittance percent', 'uvt percent', 'uv transmittance'],
-    'effluent_bacteria': ['fecal coliform', 'e coli effluent', 'enterococci effluent', 'effluent bacteria cfu'],
-    'dechlor_dose': ['dechlorination dose', 'sodium bisulfite dose', 'sulfur dioxide dose', 'so2 dose'],
-    'disinfectant_cost': ['disinfection cost dollars', 'chlorine cost', 'hypochlorite cost', 'uv power cost'],
-    'flow_disinfected': ['flow disinfected mgd', 'effluent flow mgd', 'plant flow mgd disinfection'],
-    'disinfection_run_hours': ['disinfection equipment run hours', 'uv system run hours', 'chlorinator run hours'],
-    'chlorine_feed_rate': ['chlorine feed rate lbs day', 'hypochlorite feed gpd', 'chlorine feed lbs'],
-    'ozone_dose': ['ozone dose mg l', 'ozone applied dose'],
-}
+class FuzzyParameterDetector:
+    """Detects process parameters in uploaded column headers using fuzzy matching, with hard
+    require/exclude token gates (checked before fuzzy scoring) and a unit-family penalty."""
 
-EXPECTED_UNIT_FAMILIES = {
-    'chlorine_dose': {'mg/L'},
-    'chlorine_residual_precontact': {'mg/L'},
-    'chlorine_residual_final': {'mg/L'},
-    'dechlor_dose': {'mg/L'},
-    'disinfectant_cost': {'$'},
-    'flow_disinfected': {'MGD', 'GPM', 'GPD'},
-    'disinfection_run_hours': {'Hours'},
-    'ozone_dose': {'mg/L'},
-}
+    def __init__(self, columns):
+        self.columns = list(columns)
+        self.clean_columns = [self._clean(c) for c in self.columns]
+        self.detected_params = {}
 
-REQUIRED_TOKEN_GROUPS = {
-    'chlorine_residual_precontact': [['chlorine', 'cl2', 'hypochlorite']],
-    'chlorine_residual_final': [['chlorine', 'cl2', 'hypochlorite'], ['final', 'effluent', 'discharge']],
-    'chlorine_dose': [['chlorine', 'cl2', 'hypochlorite']],
-    'chlorine_feed_rate': [['chlorine', 'cl2', 'hypochlorite']],
-    'uv_dose': [['uv', 'ultraviolet']],
-    'uv_transmittance': [['uv', 'uvt', 'transmittance']],
-    'ozone_dose': [['ozone']],
-}
+    @staticmethod
+    def _clean(s):
+        s = str(s).lower()
+        for ch in ['_', '-', '/', '(', ')', '%', '#']:
+            s = s.replace(ch, ' ')
+        return ' '.join(s.split())
 
-EXCLUDE_TOKENS = {
-    'chlorine_residual_precontact': ['final', 'discharge'],
-    'chlorine_dose': ['residual'],
-    'uv_dose': ['transmittance', 'uvt'],
-    'uv_transmittance': ['dose'],
-    'chlorine_residual_final': [],
-}
+    def find_parameters(self, keyword_groups, threshold=55, expected_units=None, required_token_groups=None, exclude_tokens=None):
+        expected_units = expected_units or {}
+        required_token_groups = required_token_groups or {}
+        exclude_tokens = exclude_tokens or {}
+        results = {}
+        for param_name, keywords in keyword_groups.items():
+            allowed_units = expected_units.get(param_name)
+            req_groups = [[self._clean(t) for t in group] for group in required_token_groups.get(param_name, [])]
+            excl_tokens = [self._clean(t) for t in exclude_tokens.get(param_name, [])]
+            kw_cleans = [self._clean(kw) for kw in keywords]
+            best_col, best_score = None, 0
+            for col, col_clean in zip(self.columns, self.clean_columns):
+                padded_col = f' {col_clean} '
 
+                def _token_hits(token):
+                    if ' ' not in token and len(token) <= 3:
+                        return f' {token} ' in padded_col
+                    return token in col_clean
 
-def categorize_param(key):
-    if 'chlorine' in key or 'dechlor' in key:
-        return 'Chlorination'
-    if 'uv' in key:
-        return 'UV'
-    if 'ozone' in key:
-        return 'Ozone'
-    return 'Process'
+                if req_groups and not all(any(_token_hits(t) for t in group) for group in req_groups):
+                    continue
+                if excl_tokens and any(_token_hits(t) for t in excl_tokens):
+                    continue
 
-
-# ============================================================
-# KPI CALCULATOR
-# ============================================================
-class KPICalculator(BaseKPICalculator):
-    def calculate_disinfection_kpis(self):
-        k = {}
-        method = self.plant_info.get('disinfection_method', 'Chlorination (Gas or Hypochlorite)')
-
-        dose_col = self.dp.get('chlorine_dose', {}).get('column')
-        dose = self._col('chlorine_dose')
-        if dose is not None:
-            k['chlorine_dose'] = {'value': dose.mean(), 'unit': 'mg/L', 'target': 'Varies by chlorine demand', 'status': 'ℹ️ Informational',
-                                   'basis': f"Average of **{dose_col}**."}
-        else:
-            k['chlorine_dose'] = self._insufficient(['Chlorine dose (mg/L) column'])
-
-        pre_col = self.dp.get('chlorine_residual_precontact', {}).get('column')
-        pre = self._col('chlorine_residual_precontact')
-        if pre is not None:
-            v = pre.mean()
-            k['chlorine_residual_precontact'] = {'value': v, 'unit': 'mg/L', 'target': '>0.5 mg/L (common reference minimum - verify your CT/permit requirement)', 'status': self._status_lower(v, 0.5),
-                                                  'basis': f"Average of **{pre_col}**."}
-        else:
-            k['chlorine_residual_precontact'] = self._insufficient(['Chlorine residual before dechlorination (mg/L) column'])
-
-        fin_col = self.dp.get('chlorine_residual_final', {}).get('column')
-        fin = self._col('chlorine_residual_final')
-        if fin is not None:
-            v = fin.mean()
-            k['chlorine_residual_final'] = {'value': v, 'unit': 'mg/L', 'target': '<0.1 mg/L (common reference for aquatic toxicity - verify your specific permit)', 'status': self._status_upper(v, 0.1),
-                                             'basis': f"Average of **{fin_col}**."}
-        else:
-            k['chlorine_residual_final'] = self._insufficient(['Final/discharge chlorine residual (mg/L) column'])
-
-        ct_col = self.dp.get('contact_time', {}).get('column')
-        ct = self._col('contact_time')
-        if ct is not None:
-            k['contact_time'] = {'value': ct.mean(), 'unit': 'min', 'target': 'Verify against your CT/permit requirement', 'status': 'ℹ️ Informational',
-                                  'basis': f"Average of **{ct_col}**."}
-        else:
-            k['contact_time'] = self._insufficient(['Contact time (minutes) column'])
-
-        if pre is not None and ct is not None:
-            ct_value = pre.mean() * ct.mean()
-            k['ct_value'] = {'value': ct_value, 'unit': 'mg/L·min', 'target': 'Required CT varies by regulation/temperature/pH - verify your permit', 'status': 'ℹ️ Informational',
-                              'basis': f"Average **{pre_col}** × average **{ct_col}**."}
-        else:
-            k['ct_value'] = self._insufficient(['Both chlorine residual (pre-dechlorination) and contact time columns'])
-
-        uv_col = self.dp.get('uv_dose', {}).get('column')
-        uv = self._col('uv_dose')
-        if uv is not None:
-            v = uv.mean()
-            k['uv_dose'] = {'value': v, 'unit': 'mJ/cm²', 'target': '>30 mJ/cm² (common reference minimum - verify your specific permit)', 'status': self._status_lower(v, 30),
-                             'basis': f"Average of **{uv_col}**."}
-        else:
-            k['uv_dose'] = self._insufficient(['UV dose (mJ/cm²) column'])
-
-        uvt_col = self.dp.get('uv_transmittance', {}).get('column')
-        uvt = self._col('uv_transmittance')
-        if uvt is not None:
-            k['uv_transmittance'] = {'value': uvt.mean(), 'unit': '%', 'target': 'Typical secondary effluent: 55-75% UVT', 'status': 'ℹ️ Informational',
-                                      'basis': f"Average of **{uvt_col}**."}
-        else:
-            k['uv_transmittance'] = self._insufficient(['UV transmittance (%UVT) column'])
-
-        bact_col = self.dp.get('effluent_bacteria', {}).get('column')
-        bact = self._col('effluent_bacteria')
-        if bact is not None:
-            k['effluent_bacteria'] = {'value': bact.mean(), 'unit': self.dp.get('effluent_bacteria', {}).get('unit', 'CFU or MPN/100mL'), 'target': 'Compare to your discharge permit limit', 'status': 'ℹ️ Informational',
-                                       'basis': f"Average of **{bact_col}**."}
-        else:
-            k['effluent_bacteria'] = self._insufficient(['Effluent fecal coliform/E. coli/enterococci column'])
-
-        dechlor_col = self.dp.get('dechlor_dose', {}).get('column')
-        dechlor = self._col('dechlor_dose')
-        if dechlor is not None:
-            k['dechlor_dose'] = {'value': dechlor.mean(), 'unit': 'mg/L', 'target': 'Track alongside pre-dechlorination residual', 'status': 'ℹ️ Informational',
-                                  'basis': f"Average of **{dechlor_col}**."}
-        else:
-            k['dechlor_dose'] = self._insufficient(['Dechlorination chemical dose (mg/L) column'])
-
-        cost_col = self.dp.get('disinfectant_cost', {}).get('column')
-        flow_col = self.dp.get('flow_disinfected', {}).get('column')
-        if cost_col and flow_col:
-            cost_series = pd.to_numeric(self.df[cost_col], errors='coerce')
-            flow_series = pd.to_numeric(self.df[flow_col], errors='coerce')
-            ratio = (cost_series / flow_series).replace([np.inf, -np.inf], np.nan).dropna()
-            if len(ratio) > 0:
-                k['disinfectant_cost_per_mg'] = {'value': ratio.mean(), 'unit': '$/MG', 'target': 'Varies by method and contract pricing', 'status': 'ℹ️ Informational',
-                                                  'basis': f"Average of (**{cost_col}** ÷ **{flow_col}**), assuming {cost_col} is a $/day total cost and {flow_col} is in MGD."}
-            else:
-                k['disinfectant_cost_per_mg'] = self._insufficient(['Disinfectant cost ($/day) and flow disinfected (MGD) columns (valid paired data)'])
-        else:
-            k['disinfectant_cost_per_mg'] = self._insufficient(['Disinfectant cost ($/day) column together with flow disinfected (MGD) column'])
-
-        if flow_col:
-            flow_series = pd.to_numeric(self.df[flow_col], errors='coerce').dropna()
-            if len(flow_series) > 0:
-                k['flow_disinfected'] = {'value': flow_series.mean(), 'unit': 'MGD', 'target': 'Informational', 'status': 'ℹ️ Informational',
-                                          'basis': f"Average of **{flow_col}**."}
-            else:
-                k['flow_disinfected'] = self._insufficient(['Flow disinfected (MGD) column'])
-        else:
-            k['flow_disinfected'] = self._insufficient(['Flow disinfected (MGD) column'])
-
-        hrs_col = self.dp.get('disinfection_run_hours', {}).get('column')
-        hrs = self._col('disinfection_run_hours')
-        if hrs is not None:
-            v = (hrs / 24 * 100).clip(upper=100).mean()
-            k['disinfection_equipment_availability'] = {'value': v, 'unit': '%', 'target': '>98%', 'status': self._status_lower(v, 95),
-                                                          'basis': f"Average of (**{hrs_col}** ÷ 24 × 100)."}
-        else:
-            k['disinfection_equipment_availability'] = self._insufficient(['Disinfection equipment run-hours column'])
-
-        feed_col = self.dp.get('chlorine_feed_rate', {}).get('column')
-        feed = self._col('chlorine_feed_rate')
-        if feed is not None:
-            k['chlorine_feed_rate'] = {'value': feed.mean(), 'unit': self.dp.get('chlorine_feed_rate', {}).get('unit', 'units'), 'target': 'Varies by equipment', 'status': 'ℹ️ Informational',
-                                        'basis': f"Average of **{feed_col}**."}
-        else:
-            k['chlorine_feed_rate'] = self._insufficient(['Chlorine feed rate column'])
-
-        ozone_col = self.dp.get('ozone_dose', {}).get('column')
-        ozone = self._col('ozone_dose')
-        if ozone is not None:
-            k['ozone_dose'] = {'value': ozone.mean(), 'unit': 'mg/L', 'target': 'Varies by ozone demand and application', 'status': 'ℹ️ Informational',
-                                'basis': f"Average of **{ozone_col}**."}
-        else:
-            k['ozone_dose'] = self._insufficient(['Ozone dose (mg/L) column'])
-
-        return k
-
-
-# ============================================================
-# SIDEBAR - FILE UPLOAD
-# ============================================================
-st.sidebar.header("📊 Upload Your Data")
-uploaded_file = st.sidebar.file_uploader("Choose your Disinfection CSV file", type=['csv'], help="Upload a CSV file with your disinfection data")
-
-if uploaded_file is None:
-    st.info("👈 **Please upload a CSV file to get started**")
-    st.markdown("""
-    ### 📋 Expected Data Format
-
-    Your CSV should contain columns like:
-
-    **Chlorination:** Chlorine Dose (mg/L), Chlorine Residual (pre- and post-dechlorination), Contact Time,
-    Dechlorination Dose, Chlorine Feed Rate
-
-    **UV:** UV Dose (mJ/cm²), UV Transmittance (%UVT), UV System Run Hours
-
-    **Ozone:** Ozone Dose (mg/L)
-
-    **Compliance:** Effluent Fecal Coliform/E. coli/Enterococci, Flow Disinfected (MGD)
-
-    **Cost:** Disinfectant Cost
-
-    ### ✨ Features
-    - 🔍 Fuzzy Logic auto-detects your columns — confirm/correct the mapping before anything is calculated
-    - 📊 AI-derived KPI dashboard (only shows what can be computed from your data, no assumed units)
-    - 💡 Technically-grounded recommendations (chlorination/UV/ozone process engineering, no external API needed)
-    - 📈 Trend, custom-period, and Period A vs Period B benchmark comparison
-    - 🔗 Correlation analysis between parameters
-    - 🔎 Data quality / outlier detection
-
-    ### 🚀 Ready? Upload your file!
-    """)
-else:
-    try:
-        df, date_col = load_process_csv(uploaded_file)
-        st.sidebar.success(f"✅ Loaded {len(df)} records")
-        st.sidebar.write(f"📅 {df[date_col].min().date()} to {df[date_col].max().date()}")
-    except Exception as e:
-        st.error(f"Error loading file: {e}")
-        st.stop()
-
-    with st.sidebar.expander("🏭 Plant Information", expanded=False):
-        plant_name = st.text_input("Plant Name", value="WWTP", key="dis_plant_name")
-        plant_location = st.text_input("Location", value="", key="dis_plant_location")
-        disinfection_method = st.selectbox("Disinfection Method", ["Chlorination (Gas or Hypochlorite)", "UV Disinfection", "Ozone", "Combination/Other"], key="dis_method")
-        plant_capacity = st.number_input("Plant Capacity (MGD)", value=10.0, min_value=0.1, key="dis_capacity")
-
-        plant_info = {
-            'name': plant_name, 'location': plant_location, 'disinfection_method': disinfection_method, 'capacity': plant_capacity,
-        }
-
-    # ------------------------------------------------------
-    # PARAMETER DETECTION + CONFIRM/EDIT MAPPING
-    # ------------------------------------------------------
-    auto_detected_params = _detect_parameters(df, PARAMETER_KEYWORDS, EXPECTED_UNIT_FAMILIES, REQUIRED_TOKEN_GROUPS, EXCLUDE_TOKENS, threshold=55)
-
-    st.header("🔧 Confirm Data Mapping")
-    st.write(
-        "This is exactly what we matched your columns to, with a confidence score. **Every KPI, chart, and "
-        "recommendation below uses only this table** — fix any row that picked the wrong column, or set it to "
-        "**'— None detected —'** if you don't have that data. Nothing is assumed beyond what you confirm here."
-    )
-    with st.expander("📝 Review & edit detected columns", expanded=True):
-        detected_params = _render_mapping_editor(auto_detected_params, df.columns, key_prefix="dis_main", categorize_fn=categorize_param)
-
-    st.divider()
-
-    st.sidebar.subheader("🔍 Confirmed Parameters")
-    detected_count = sum(1 for p in detected_params.values() if p['column'])
-    for param_name, param_info in detected_params.items():
-        if param_info['column']:
-            st.sidebar.write(f"✅ {param_name}: **{param_info['column']}** ({param_info['unit']})")
-    st.sidebar.write(f"\n**Confirmed: {detected_count}/{len(detected_params)} parameters**")
-
-    analyzer = BaseRecommendationEngine(
-        [DISINFECTION_KPI_DEFINITIONS], RECOMMENDATION_TEMPLATES, PRIORITY_MAP, savings_estimator=estimate_savings,
-    )
-    kpi_calculator = KPICalculator(df, detected_params, plant_info)
-    correlation_analyzer = CorrelationAnalyzer(df, detected_params)
-    chart_renderer = ChartRenderer(df)
-
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-        "📊 Dashboard", "💡 AI Recommendations", "📈 Trend / Benchmark", "🔗 Correlation Analysis",
-        "🦠 Disinfection Performance", "🔍 Data Quality", "📋 Parameters", "📥 Raw Data",
-    ])
-
-    # ============================================================
-    # TAB 1: DASHBOARD
-    # ============================================================
-    with tab1:
-        header_col, year_col = st.columns([3, 1])
-        with header_col:
-            st.header(f"📊 Performance Dashboard - {plant_info.get('name', 'WWTP')}")
-            if plant_info.get('location'):
-                st.caption(f"📍 {plant_info['location']} | Capacity: {plant_info.get('capacity', 'N/A')} MGD | Method: {plant_info.get('disinfection_method')}")
-
-        available_years = sorted(df[date_col].dt.year.dropna().unique().astype(int).tolist())
-        today = date.today()
-        current_year = today.year
-        year_options = ["All"] + [str(y) for y in available_years]
-
-        if current_year in available_years:
-            default_year_str = str(current_year)
-        elif available_years:
-            default_year_str = str(max(available_years))
-        else:
-            default_year_str = "All"
-        default_index = year_options.index(default_year_str) if default_year_str in year_options else 0
-
-        with year_col:
-            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-            selected_year_str = st.selectbox("Year", year_options, index=default_index, key="dis_dashboard_year_filter")
-
-        if selected_year_str == "All":
-            dashboard_df = df
-            period_caption = f"All data ({df[date_col].min().date()} to {df[date_col].max().date()})"
-        else:
-            yr = int(selected_year_str)
-            if yr == current_year:
-                mask = (df[date_col].dt.year == yr) & (df[date_col].dt.date <= today)
-                dashboard_df = df[mask]
-                period_caption = f"Year to date: Jan 1, {yr} – {today.strftime('%b %d, %Y')}"
-            else:
-                mask = df[date_col].dt.year == yr
-                dashboard_df = df[mask]
-                period_caption = f"Full year {yr}"
-
-        if len(dashboard_df) == 0:
-            st.warning(f"No records fall in the selected period ({period_caption}). Showing full dataset instead.")
-            dashboard_df = df
-            period_caption = f"All data ({df[date_col].min().date()} to {df[date_col].max().date()})"
-
-        st.caption(f"📅 {period_caption} &nbsp;·&nbsp; {len(dashboard_df)} record(s) &nbsp;·&nbsp; "
-                   f"KPIs below are computed from the columns you confirmed above, averaged over this period.")
-
-        dashboard_kpi_calculator = KPICalculator(dashboard_df, detected_params, plant_info)
-        dis_kpis = dashboard_kpi_calculator.calculate_disinfection_kpis()
-
-        st.subheader("🦠 Disinfection KPIs")
-        render_kpi_grid(dis_kpis, DISINFECTION_KPI_DEFINITIONS)
-
-    # ============================================================
-    # TAB 2: AI RECOMMENDATIONS
-    # ============================================================
-    with tab2:
-        st.header("💡 AI-Powered Recommendations")
-        st.write("Generated from the KPIs on the Dashboard tab, using only the parameters you confirmed above. Purely "
-                 "rule-based (no external API/key needed) - grounded in chlorination/UV/ozone process engineering.")
-
-        dis_kpis = kpi_calculator.calculate_disinfection_kpis()
-        recommendations, good_items = analyzer.generate_recommendations(dis_kpis)
-        render_recommendations_tab(recommendations, good_items)
-
-    # ============================================================
-    # TAB 3: TREND / BENCHMARK ANALYSIS
-    # ============================================================
-    with tab3:
-        st.header("📈 Trend & Benchmark Analysis")
-        st.write("Analyze any column over time, over a custom date range, or benchmark two date ranges side-by-side — all from your one uploaded file.")
-
-        numeric_cols = {}
-        for col in df.columns:
-            if col == date_col:
-                continue
-            s = pd.to_numeric(df[col], errors='coerce')
-            if s.notna().sum() > 0:
-                matched_unit = next((p['unit'] for p in detected_params.values() if p['column'] == col), None)
-                numeric_cols[col] = matched_unit or 'Unknown'
-
-        if not numeric_cols:
-            st.warning("No numeric columns found in your data.")
-        else:
-            analyze_mode = st.radio("Analyze", ["Single Indicator", "Ratio"], horizontal=True,
-                                     help="A ratio lets you build any custom metric on the fly (pick a numerator and a denominator column), e.g. Disinfectant Cost ÷ Flow Disinfected.",
-                                     key="dis_analyze_mode")
-
-            if analyze_mode == "Single Indicator":
-                selected_column = st.selectbox("Select Indicator", list(numeric_cols.keys()), format_func=lambda x: f"{x} ({numeric_cols[x]})", key="dis_selected_column")
-                working_label = selected_column
-                working_unit = numeric_cols[selected_column]
-                working_series = pd.to_numeric(df[selected_column], errors='coerce')
-            else:
-                rc1, rc2 = st.columns(2)
-                col_list = list(numeric_cols.keys())
-                with rc1:
-                    numerator_col = st.selectbox("Numerator", col_list, format_func=lambda x: f"{x} ({numeric_cols[x]})", key="dis_ratio_numerator")
-                with rc2:
-                    default_denom_idx = 1 if len(col_list) > 1 else 0
-                    denominator_col = st.selectbox("Denominator", col_list, index=default_denom_idx, format_func=lambda x: f"{x} ({numeric_cols[x]})", key="dis_ratio_denominator")
-                num_series = pd.to_numeric(df[numerator_col], errors='coerce')
-                denom_series = pd.to_numeric(df[denominator_col], errors='coerce')
-                working_series = (num_series / denom_series).replace([np.inf, -np.inf], np.nan)
-                working_label = f"{numerator_col} ÷ {denominator_col}"
-                num_unit, denom_unit = numeric_cols[numerator_col], numeric_cols[denominator_col]
-                working_unit = f"{num_unit}/{denom_unit}" if 'Unknown' not in (num_unit, denom_unit) else "ratio"
-                if numerator_col == denominator_col:
-                    st.info("Numerator and denominator are the same column, so this ratio will just be 1.0 - pick two different columns.")
-
-            col_s2, col_s3 = st.columns(2)
-            with col_s2:
-                aggregation = st.selectbox("Aggregation Period", ["Daily", "Weekly", "Monthly", "Quarterly"], key="dis_aggregation")
-            with col_s3:
-                agg_method = st.selectbox("Aggregation Method", ["Average", "Total"], key="dis_agg_method")
-
-            agg_func = 'sum' if agg_method == 'Total' else 'mean'
-            freq_map = {"Daily": 'D', "Weekly": 'W', "Monthly": 'MS', "Quarterly": 'QS'}
-
-            mode = st.radio("Analysis Mode", ["Full Timeline", "Custom Period", "Period A vs Period B (Benchmark)"], horizontal=True, key="dis_mode")
-
-            df_yoy = pd.DataFrame({date_col: pd.to_datetime(df[date_col]), 'value': working_series}).dropna()
-
-            if len(df_yoy) == 0:
-                st.warning("No valid numeric data for this selection.")
-            else:
-                data_min = df_yoy[date_col].min().date()
-                data_max = df_yoy[date_col].max().date()
-
-                def plot_series(df_agg, title):
-                    import plotly.graph_objects as go
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=df_agg.index, y=df_agg.values, mode='lines+markers', name=working_label, line=dict(color=VEOLIA['turquoise'], width=2), marker=dict(size=6, color=VEOLIA['marine'])))
-                    x_numeric = np.arange(len(df_agg))
-                    z = None
-                    if len(x_numeric) > 1:
-                        z = np.polyfit(x_numeric, df_agg.values, 1)
-                        p = np.poly1d(z)
-                        fig.add_trace(go.Scatter(x=df_agg.index, y=p(x_numeric), mode='lines', name='Trend', line=dict(color=VEOLIA['apricot'], width=2, dash='dash')))
-                    fig.update_layout(
-                        title=dict(text=title, font=dict(color=VEOLIA['marine'])),
-                        xaxis_title="Date", yaxis_title=working_unit, height=500, hovermode='x unified',
-                        plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', font=dict(color=VEOLIA['marine']),
-                        xaxis=dict(gridcolor='#E9EEF1'), yaxis=dict(gridcolor='#E9EEF1'),
+                col_best, best_kw_len = 0, 1
+                for kw, kw_clean in zip(keywords, kw_cleans):
+                    score = max(
+                        fuzz.token_set_ratio(kw_clean, col_clean),
+                        fuzz.partial_ratio(kw_clean, col_clean),
                     )
-                    render_chart_with_download(fig, key="dis_trend_single_chart")
+                    if score > col_best:
+                        col_best = score
+                        best_kw_len = max(1, len(kw_clean.split()))
 
-                    stat_c1, stat_c2, stat_c3, stat_c4 = st.columns(4)
-                    with stat_c1:
-                        st.metric("Mean", f"{df_agg.mean():.3f}")
-                    with stat_c2:
-                        st.metric("Median", f"{df_agg.median():.3f}")
-                    with stat_c3:
-                        st.metric("Min", f"{df_agg.min():.3f}")
-                    with stat_c4:
-                        st.metric("Max", f"{df_agg.max():.3f}")
+                col_len = max(1, len(col_clean.split()))
+                coverage = min(1.0, (best_kw_len + 1) / col_len)
+                adjusted = col_best * coverage
 
-                    if z is not None:
-                        direction = "📈 Increasing" if z[0] > 0 else "📉 Decreasing"
-                        st.write(f"**Trend:** {direction} (slope: {z[0]:.4f} per {aggregation.lower()[:-2] if aggregation != 'Daily' else 'day'})")
+                if allowed_units:
+                    if self._detect_unit(col) not in allowed_units:
+                        adjusted = adjusted * 0.55
 
-                if mode == "Full Timeline":
-                    try:
-                        df_agg = df_yoy.set_index(date_col)['value'].resample(freq_map[aggregation]).agg(agg_func).dropna()
-                        if len(df_agg) > 0:
-                            plot_series(df_agg, f"{working_label} - {aggregation} Aggregation (Full Timeline)")
-                        else:
-                            st.warning("No data available after aggregation")
-                    except Exception as e:
-                        st.error(f"Error processing data: {e}")
+                if adjusted > best_score:
+                    best_score = adjusted
+                    best_col = col
+            if best_col and best_score >= threshold:
+                results[param_name] = {'column': best_col, 'score': round(best_score), 'unit': self._detect_unit(best_col)}
+            else:
+                results[param_name] = {'column': None, 'score': round(best_score), 'unit': 'Unknown'}
+        self.detected_params = results
+        return results
 
-                elif mode == "Custom Period":
-                    date_range = st.date_input("Select Date Range", value=(data_min, data_max), min_value=data_min, max_value=data_max, key="dis_custom_period")
-                    if isinstance(date_range, tuple) and len(date_range) == 2:
-                        start_d, end_d = date_range
-                        mask = (df_yoy[date_col].dt.date >= start_d) & (df_yoy[date_col].dt.date <= end_d)
-                        df_period = df_yoy[mask]
-                        if len(df_period) == 0:
-                            st.warning("No data in the selected range")
-                        else:
-                            try:
-                                df_agg = df_period.set_index(date_col)['value'].resample(freq_map[aggregation]).agg(agg_func).dropna()
-                                if len(df_agg) > 0:
-                                    plot_series(df_agg, f"{working_label} - {start_d.strftime('%b %d, %Y')} to {end_d.strftime('%b %d, %Y')}")
-                                else:
-                                    st.warning("No data available after aggregation for this range")
-                            except Exception as e:
-                                st.error(f"Error processing data: {e}")
-                    else:
-                        st.info("👆 Select both a start and end date to continue")
+    @staticmethod
+    def _detect_unit(column_name):
+        col_lower = column_name.lower()
+        words = col_lower.replace('/', ' ').replace('-', ' ').split()
+        if any(x in col_lower for x in ['ntu']):
+            return 'NTU'
+        if 'ph' in words:
+            return 'pH'
+        if 'kwh' in col_lower:
+            return 'kWh'
+        if 'temp' in col_lower or 'temperature' in col_lower:
+            return 'Temp'
+        # "lbs/MG" or "gal/MG" (dose per million gallons treated) vs "mg/L" (milligrams per liter,
+        # a concentration) look confusingly similar once lowercased ("mg" vs "MG" collide) - the
+        # reliable signal is which side of the slash "mg" falls on: numerator = milligrams (mg/L),
+        # denominator with lbs/gal before it = million gallons (lbs/MG, gal/MG).
+        if any(p in col_lower for p in ['lbs/mg', 'lb/mg', 'lbs per mg']):
+            return 'lbs/MG'
+        if any(p in col_lower for p in ['gal/mg', 'gallons/mg', 'gal per mg']):
+            return 'gal/MG'
+        ratio_markers = ['lbs/ton', 'lb/ton', 'lbs per ton', 'lb per ton', '/ton', '/dt', 'per ton', 'per dt']
+        if any(m in col_lower for m in ratio_markers):
+            return 'lbs/ton'
+        if 'gpd' in col_lower and ('poly' in col_lower or 'coag' in col_lower or 'chem' in col_lower):
+            return 'GPD'
+        if any(x in col_lower for x in ['%', 'percent', 'solids', 'cake', 'ts', 'tss', 'moisture']):
+            return '%'
+        if 'scfm' in col_lower:
+            return 'SCFM'
+        if any(x in col_lower for x in ['flow', 'gpm', 'mgd', 'gpd', 'rate']):
+            if 'mgd' in col_lower:
+                return 'MGD'
+            if 'gpm' in col_lower:
+                return 'GPM'
+            if 'gpd' in col_lower:
+                return 'GPD'
+            return 'MGD'
+        if any(x in col_lower for x in ['ton', 'dry', 'wet', 'weight', 'mass']):
+            if 'dry' in col_lower:
+                return 'Dry Tons'
+            if 'wet' in col_lower:
+                return 'Wet Tons'
+            return 'Tons'
+        if any(x in col_lower for x in ['truck', 'count', 'number', 'qty']):
+            return 'Count'
+        if any(x in col_lower for x in ['hour', 'runtime', 'time', 'hrs']):
+            return 'Hours'
+        if 'mg/l' in col_lower or 'ppm' in col_lower:
+            return 'mg/L'
+        if any(x in col_lower for x in ['concentration', 'conc']):
+            return 'mg/L'
+        if any(x in col_lower for x in ['rpm', 'speed', 'bowl']):
+            return 'RPM'
+        if any(x in col_lower for x in ['torque', 'nm', 'ft-lb']):
+            return 'Nm'
+        if any(x in col_lower for x in ['cost', 'price', '$', 'dollar']):
+            return '$'
+        if any(x in col_lower for x in ['pressure', 'psi', 'bar']):
+            return 'PSI'
+        if 'log' in col_lower:
+            return 'log'
+        if 'cfu' in col_lower or 'mpn' in col_lower:
+            return 'CFU or MPN/100mL'
+        return 'Unknown'
 
-                else:
-                    st.write("**Define two date ranges** and the app will pull the matching data for each and plot them together.")
-                    midpoint = data_min + (data_max - data_min) / 2
-                    pc1, pc2 = st.columns(2)
-                    with pc1:
-                        st.markdown("**Period A**")
-                        a_range = st.date_input("Period A date range", value=(data_min, midpoint), min_value=data_min, max_value=data_max, key="dis_period_a_range")
-                    with pc2:
-                        st.markdown("**Period B**")
-                        b_range = st.date_input("Period B date range", value=(midpoint, data_max), min_value=data_min, max_value=data_max, key="dis_period_b_range")
 
-                    if isinstance(a_range, tuple) and len(a_range) == 2 and isinstance(b_range, tuple) and len(b_range) == 2:
-                        a_start, a_end = a_range
-                        b_start, b_end = b_range
-                        mask_a = (df_yoy[date_col].dt.date >= a_start) & (df_yoy[date_col].dt.date <= a_end)
-                        mask_b = (df_yoy[date_col].dt.date >= b_start) & (df_yoy[date_col].dt.date <= b_end)
-                        df_a = df_yoy[mask_a].copy()
-                        df_b = df_yoy[mask_b].copy()
+# ============================================================
+# CSV LOADING (generic)
+# ============================================================
+def load_process_csv(uploaded_file):
+    """Read a CSV, detect/parse a date column (or synthesize one).
+    Returns (df, date_col, used_synthetic_dates) - always check the third value and surface it
+    to the user (see render_date_column_selector) rather than silently trusting the date range,
+    since a failed date-parse produces a fake sequential calendar that looks plausible at a glance
+    but will scramble any year-based filtering or trend analysis downstream."""
+    df = pd.read_csv(uploaded_file)
+    df = df.reset_index(drop=True)
+    date_col = None
+    best_frac = 0
+    best_converted = None
+    for col in df.columns:
+        if any(x in col.lower() for x in ['date', 'time', 'day', 'month', 'year']):
+            try:
+                converted = pd.to_datetime(df[col], errors='coerce')
+            except Exception:
+                continue
+            valid_frac = converted.notna().sum() / max(len(df), 1)
+            if valid_frac > 0.5 and valid_frac > best_frac:
+                best_frac = valid_frac
+                date_col = col
+                best_converted = converted
+    if date_col:
+        df[date_col] = best_converted
+        df = df.sort_values(date_col).reset_index(drop=True)
+        return df, date_col, False
+    else:
+        df['Date'] = pd.date_range(start='2023-01-01', periods=len(df), freq='D')
+        return df, 'Date', True
 
-                        if len(df_a) == 0 or len(df_b) == 0:
-                            st.warning("One or both periods have no data. Adjust the date ranges above.")
-                        else:
-                            try:
-                                import plotly.graph_objects as go
-                                agg_a = df_a.set_index(date_col)['value'].resample(freq_map[aggregation]).agg(agg_func).dropna()
-                                agg_b = df_b.set_index(date_col)['value'].resample(freq_map[aggregation]).agg(agg_func).dropna()
 
-                                label_a = f"Period A: {a_start.strftime('%b %d, %Y')} - {a_end.strftime('%b %d, %Y')}"
-                                label_b = f"Period B: {b_start.strftime('%b %d, %Y')} - {b_end.strftime('%b %d, %Y')}"
+def render_date_column_selector(df, date_col, used_synthetic, key_prefix):
+    """Shows the detected date column/range plainly, warns loudly if synthetic dates were used,
+    and always lets the user manually pick the real date column instead - auto-detection can't
+    cover every naming convention (e.g. 'Month Year' style columns, non-English headers, etc).
+    Returns the (possibly corrected) df and date_col."""
+    if used_synthetic:
+        st.warning(
+            "⚠️ **No date column could be confidently auto-detected** — using a placeholder sequential "
+            "daily calendar starting 2023-01-01. Year filtering and trend analysis will be meaningless "
+            "until you pick your real date column below."
+        )
+    else:
+        st.caption(f"📅 Date column detected: **{date_col}** ({df[date_col].min().date()} to {df[date_col].max().date()})")
 
-                                date_fmt = '%b %d, %Y' if aggregation in ('Daily', 'Weekly') else '%b %Y'
-                                offset_a = list(range(len(agg_a)))
-                                offset_b = list(range(len(agg_b)))
-                                dates_a_text = [d.strftime(date_fmt) for d in agg_a.index]
-                                dates_b_text = [d.strftime(date_fmt) for d in agg_b.index]
+    all_cols = list(df.columns)
+    options = ["Keep as detected"] + [c for c in all_cols if c != date_col]
+    choice = st.selectbox(
+        "Not right? Pick your actual date column",
+        options, index=0, key=f"{key_prefix}_date_col_override",
+        help="Select the column that actually contains your date/period (e.g. 'Month Year', 'Date', 'Period')."
+    )
+    if choice != "Keep as detected":
+        converted = pd.to_datetime(df[choice], errors='coerce')
+        valid_frac = converted.notna().sum() / max(len(df), 1)
+        if valid_frac < 0.5:
+            st.error(f"'{choice}' couldn't be parsed as dates for most rows ({valid_frac:.0%} valid) - keeping the previous date column.")
+            return df, date_col
+        new_df = df.copy()
+        if used_synthetic and date_col in new_df.columns:
+            new_df = new_df.drop(columns=[date_col])
+        new_df[choice] = converted
+        new_df = new_df.sort_values(choice).reset_index(drop=True)
+        st.success(f"✅ Using **{choice}** as the date column ({new_df[choice].min().date()} to {new_df[choice].max().date()}, {new_df[choice].notna().sum()}/{len(new_df)} rows parsed).")
+        return new_df, choice
+    return df, date_col
 
-                                n = len(offset_a)
-                                step = max(1, int(np.ceil(n / 12))) if n else 1
-                                tick_idx = list(range(0, n, step))
-                                if n and tick_idx[-1] != n - 1:
-                                    tick_idx.append(n - 1)
-                                tickvals = [offset_a[i] for i in tick_idx]
-                                ticktext = [dates_a_text[i] for i in tick_idx]
 
-                                fig = go.Figure()
-                                fig.add_trace(go.Scatter(
-                                    x=offset_a, y=agg_a.values, mode='lines+markers', name=label_a,
-                                    line=dict(color=VEOLIA['turquoise'], width=3), customdata=dates_a_text,
-                                    hovertemplate=f"{label_a}<br>%{{customdata}}: %{{y:.3f}}<extra></extra>",
-                                ))
-                                fig.add_trace(go.Scatter(
-                                    x=offset_b, y=agg_b.values, mode='lines+markers', name=label_b,
-                                    line=dict(color=VEOLIA['apricot'], width=3), customdata=dates_b_text,
-                                    hovertemplate=f"{label_b}<br>%{{customdata}}: %{{y:.3f}}<extra></extra>",
-                                ))
-                                fig.update_layout(
-                                    title=dict(text=f"Benchmark Comparison: {working_label} ({aggregation}, {agg_method})", font=dict(color=VEOLIA['marine'])),
-                                    xaxis=dict(title="Date (Period A dates shown; Period B is aligned to the same relative position)",
-                                               tickmode='array', tickvals=tickvals, ticktext=ticktext, tickangle=-30, gridcolor='#E9EEF1'),
-                                    yaxis=dict(title=working_unit, gridcolor='#E9EEF1'),
-                                    height=520, hovermode='closest', margin=dict(b=110),
-                                    plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', font=dict(color=VEOLIA['marine']),
-                                )
-                                render_chart_with_download(fig, key="dis_trend_benchmark_chart")
+def detect_parameters(df, keyword_dict, expected_units, required_token_groups, exclude_tokens, threshold=55, exclude_columns=None):
+    """exclude_columns should always include your date column - otherwise the date column can get
+    fuzzy-matched as an unrelated parameter (e.g. 'Contact Time'), and any numeric calculation on it
+    produces a nonsense astronomical number (a date's nanoseconds-since-1970 representation)."""
+    exclude_columns = set(exclude_columns or [])
+    candidate_cols = [c for c in df.columns if c not in exclude_columns]
+    detector = FuzzyParameterDetector(candidate_cols)
+    return detector.find_parameters(keyword_dict, threshold=threshold, expected_units=expected_units,
+                                     required_token_groups=required_token_groups, exclude_tokens=exclude_tokens)
 
-                                st.subheader("📊 Comparison Statistics")
-                                stat_df = pd.DataFrame({
-                                    'Metric': ['Mean', 'Median', 'Min', 'Max', 'Std Dev'],
-                                    label_a: [agg_a.mean(), agg_a.median(), agg_a.min(), agg_a.max(), agg_a.std()],
-                                    label_b: [agg_b.mean(), agg_b.median(), agg_b.min(), agg_b.max(), agg_b.std()],
-                                })
-                                stat_df['% Change (A→B)'] = ((stat_df[label_b] - stat_df[label_a]) / stat_df[label_a] * 100)
-                                st.dataframe(stat_df.round(4), use_container_width=True)
 
-                                if agg_a.mean() != 0:
-                                    pct_change_mean = (agg_b.mean() - agg_a.mean()) / agg_a.mean() * 100
-                                    direction = "increased" if pct_change_mean > 0 else "decreased"
-                                    st.info(f"**{working_label}** {direction} by **{abs(pct_change_mean):.1f}%** from Period A to Period B")
-                            except Exception as e:
-                                st.error(f"Error processing comparison: {e}")
-                    else:
-                        st.info("👆 Select both a start and end date for each period to continue")
+def render_mapping_editor(detected_params, df_columns, key_prefix, categorize_fn):
+    """Interactive, editable table so the user can confirm or correct every fuzzy-matched column
+    before it's used anywhere else. `categorize_fn` groups parameter keys for display (e.g. by
+    sub-process) - pass any callable(key) -> str."""
+    all_columns = ["— None detected —"] + list(df_columns)
+    rows = []
+    for key, info in sorted(detected_params.items(), key=lambda kv: (categorize_fn(kv[0]), kv[0])):
+        rows.append({
+            'Category': categorize_fn(key),
+            'Parameter': key,
+            'Column Used': info['column'] if info['column'] else "— None detected —",
+            'Match %': int(info['score']),
+            'Unit': info['unit'],
+        })
+    mapping_df = pd.DataFrame(rows)
 
-    # ============================================================
-    # TAB 4: CORRELATION ANALYSIS
-    # ============================================================
-    with tab4:
-        st.header("🔗 Correlation Analysis")
-        st.write("Analyze relationships between confirmed disinfection parameters.")
+    edited = st.data_editor(
+        mapping_df,
+        column_config={
+            'Category': st.column_config.TextColumn(disabled=True),
+            'Parameter': st.column_config.TextColumn(disabled=True),
+            'Column Used': st.column_config.SelectboxColumn(options=all_columns, required=True, width="large"),
+            'Match %': st.column_config.NumberColumn(disabled=True, format="%d%%"),
+            'Unit': st.column_config.TextColumn(disabled=False, help="Edit this if the auto-detected unit is wrong."),
+        },
+        hide_index=True,
+        use_container_width=True,
+        key=f"{key_prefix}_mapping_editor",
+    )
 
-        corr_matrix = correlation_analyzer.calculate_correlations()
-
-        if corr_matrix is None or len(corr_matrix.columns) < 2:
-            st.warning("Not enough confirmed numeric parameters for correlation analysis. Check **Confirm Data Mapping** above.")
+    updated = {}
+    for _, row in edited.iterrows():
+        key = row['Parameter']
+        col = row['Column Used']
+        unit_override = str(row['Unit']).strip() if pd.notna(row['Unit']) and str(row['Unit']).strip() else None
+        if col == "— None detected —" or pd.isna(col):
+            updated[key] = {'column': None, 'score': 0, 'unit': 'Unknown'}
         else:
-            st.subheader("📊 Correlation Heatmap")
-            fig_heatmap = correlation_analyzer.create_correlation_heatmap()
-            if fig_heatmap:
-                render_chart_with_download(fig_heatmap, key="dis_corr_heatmap")
+            updated[key] = {'column': col, 'score': row['Match %'], 'unit': unit_override or FuzzyParameterDetector._detect_unit(col)}
+    return updated
 
-            st.divider()
-            st.subheader("🔍 Strong Correlations (|r| ≥ 0.7)")
-            strong_corrs = correlation_analyzer.find_strong_correlations(threshold=0.7)
 
-            if strong_corrs:
-                st.dataframe(pd.DataFrame(strong_corrs), use_container_width=True)
-            else:
-                st.info("No strong correlations found (threshold: |r| ≥ 0.7)")
-                st.subheader("📊 Moderate Correlations (0.5 ≤ |r| < 0.7)")
-                moderate_corrs = correlation_analyzer.find_strong_correlations(threshold=0.5)
-                moderate_corrs = [c for c in moderate_corrs if abs(c['Correlation']) < 0.7]
-                if moderate_corrs:
-                    st.dataframe(pd.DataFrame(moderate_corrs), use_container_width=True)
+# ============================================================
+# CORRELATION ANALYZER (generic)
+# ============================================================
+class CorrelationAnalyzer:
+    def __init__(self, df, detected_params):
+        self.df = df
+        self.detected_params = detected_params
+
+    def get_numeric_data(self):
+        numeric_data = {}
+        for param_info in self.detected_params.values():
+            if param_info['column']:
+                col_data = pd.to_numeric(self.df[param_info['column']], errors='coerce')
+                if col_data.dropna().shape[0] > 0:
+                    numeric_data[param_info['column']] = col_data
+        return pd.DataFrame(numeric_data)
+
+    def calculate_correlations(self):
+        df_numeric = self.get_numeric_data()
+        if len(df_numeric.columns) < 2:
+            return None
+        return df_numeric.corr()
+
+    def find_strong_correlations(self, threshold=0.7):
+        corr_matrix = self.calculate_correlations()
+        if corr_matrix is None:
+            return []
+        strong = []
+        for i in range(len(corr_matrix.columns)):
+            for j in range(i + 1, len(corr_matrix.columns)):
+                val = corr_matrix.iloc[i, j]
+                if pd.notna(val) and abs(val) >= threshold:
+                    strong.append({
+                        'Variable 1': corr_matrix.columns[i],
+                        'Variable 2': corr_matrix.columns[j],
+                        'Correlation': val,
+                        'Strength': 'Strong Positive' if val > 0 else 'Strong Negative',
+                        'Interpretation': self._interpret(corr_matrix.columns[i], corr_matrix.columns[j], val),
+                    })
+        return sorted(strong, key=lambda x: abs(x['Correlation']), reverse=True)
+
+    @staticmethod
+    def _interpret(var1, var2, corr_val):
+        if corr_val > 0.7:
+            return "Strong positive relationship - variables move together"
+        if corr_val < -0.7:
+            return "Strong negative relationship - variables move in opposite directions"
+        return "Moderate relationship - investigate further"
+
+    def create_correlation_heatmap(self):
+        corr_matrix = self.calculate_correlations()
+        if corr_matrix is None:
+            return None
+        veolia_diverging = [
+            [0.0, VEOLIA['red']], [0.25, '#FFB3B3'], [0.5, '#FFFFFF'],
+            [0.75, VEOLIA['sky_blue']], [1.0, VEOLIA['marine']],
+        ]
+        fig = go.Figure(data=go.Heatmap(
+            z=corr_matrix.values, x=corr_matrix.columns, y=corr_matrix.columns,
+            colorscale=veolia_diverging, zmid=0, zmin=-1, zmax=1, text=np.round(corr_matrix.values, 2),
+            texttemplate='%{text:.2f}', textfont={"size": 10, "color": VEOLIA['marine']}, colorbar=dict(title="Correlation"),
+        ))
+        fig.update_layout(
+            title=dict(text="Correlation Matrix - Confirmed Parameters", font=dict(color=VEOLIA['marine'])),
+            height=600, xaxis_title="Parameters", yaxis_title="Parameters",
+            plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', font=dict(color=VEOLIA['marine']),
+        )
+        return fig
+
+    def create_scatter_plot(self, var1_col, var2_col):
+        var1_data = pd.to_numeric(self.df[var1_col], errors='coerce').dropna()
+        var2_data = pd.to_numeric(self.df[var2_col], errors='coerce')
+        var2_data = var2_data[var1_data.index]
+        corr = var1_data.corr(var2_data)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=var1_data, y=var2_data, mode='markers', marker=dict(size=8, color=VEOLIA['turquoise'], opacity=0.7), name='Data Points'))
+        if len(var1_data) > 1:
+            z = np.polyfit(var1_data, var2_data, 1)
+            p = np.poly1d(z)
+            x_trend = np.linspace(var1_data.min(), var1_data.max(), 100)
+            fig.add_trace(go.Scatter(x=x_trend, y=p(x_trend), mode='lines', name='Trend Line', line=dict(color=VEOLIA['apricot'], width=2)))
+        fig.update_layout(
+            title=dict(text=f"{var1_col} vs {var2_col}<br>Correlation: {corr:.3f}", font=dict(color=VEOLIA['marine'])),
+            xaxis_title=var1_col, yaxis_title=var2_col, height=500, hovermode='closest',
+            plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF', font=dict(color=VEOLIA['marine']),
+            xaxis=dict(gridcolor='#E9EEF1'), yaxis=dict(gridcolor='#E9EEF1'),
+        )
+        return fig
+
+
+# ============================================================
+# CHART RENDERER (generic)
+# ============================================================
+class ChartRenderer:
+    def __init__(self, df):
+        self.df = df
+
+    @staticmethod
+    def _base_layout(fig, title, unit):
+        fig.update_layout(
+            title=dict(text=title, font=dict(color=VEOLIA['marine'], size=16)),
+            height=400, hovermode='x unified', xaxis_title="Days", yaxis_title=unit,
+            plot_bgcolor='#FFFFFF', paper_bgcolor='#FFFFFF',
+            font=dict(color=VEOLIA['marine']),
+            legend=dict(bgcolor='rgba(255,255,255,0.8)'),
+            xaxis=dict(gridcolor='#E9EEF1'), yaxis=dict(gridcolor='#E9EEF1'),
+        )
+        return fig
+
+    def render_line_with_ma(self, column, unit, title, threshold_excellent=None, threshold_good=None):
+        col_data = pd.to_numeric(self.df[column], errors='coerce')
+        col_ma = col_data.rolling(window=7).mean()
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=self.df.index, y=col_data, mode='markers', name='Daily', marker=dict(size=4, color=VEOLIA['sky_blue'], opacity=0.7)))
+        fig.add_trace(go.Scatter(x=self.df.index, y=col_ma, mode='lines', name='7-day MA', line=dict(color=VEOLIA['marine'], width=2)))
+        if threshold_excellent is not None:
+            fig.add_hline(y=threshold_excellent, line_dash="dash", line_color=VEOLIA['forest_green'], annotation_text="Excellent", annotation_font_color=VEOLIA['forest_green'])
+        if threshold_good is not None:
+            fig.add_hline(y=threshold_good, line_dash="dash", line_color=VEOLIA['apricot'], annotation_text="Good", annotation_font_color=VEOLIA['apricot'])
+        return self._base_layout(fig, f"{title} ({unit})", unit)
+
+    def render_bar_with_ma(self, column, unit, title):
+        col_data = pd.to_numeric(self.df[column], errors='coerce')
+        col_ma = col_data.rolling(window=7).mean()
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=self.df.index, y=col_data, name='Daily', marker=dict(color=VEOLIA['turquoise'], opacity=0.75)))
+        fig.add_trace(go.Scatter(x=self.df.index, y=col_ma, mode='lines', name='7-day MA', line=dict(color=VEOLIA['marine'], width=2)))
+        return self._base_layout(fig, f"{title} ({unit})", unit)
+
+    def render_ratio(self, column1, column2, unit, title, threshold_excellent=None, threshold_good=None):
+        col1_data = pd.to_numeric(self.df[column1], errors='coerce')
+        col2_data = pd.to_numeric(self.df[column2], errors='coerce')
+        ratio_data = (col1_data / col2_data).replace([np.inf, -np.inf], np.nan)
+        ratio_ma = ratio_data.rolling(window=7).mean()
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=self.df.index, y=ratio_data, mode='markers', name='Daily', marker=dict(size=4, color=VEOLIA['sky_blue'], opacity=0.7)))
+        fig.add_trace(go.Scatter(x=self.df.index, y=ratio_ma, mode='lines', name='7-day MA', line=dict(color=VEOLIA['marine'], width=2)))
+        if threshold_excellent is not None:
+            fig.add_hline(y=threshold_excellent, line_dash="dash", line_color=VEOLIA['forest_green'], annotation_text="Excellent", annotation_font_color=VEOLIA['forest_green'])
+        if threshold_good is not None:
+            fig.add_hline(y=threshold_good, line_dash="dash", line_color=VEOLIA['apricot'], annotation_text="Good", annotation_font_color=VEOLIA['apricot'])
+        return self._base_layout(fig, f"{title} ({unit})", unit)
+
+
+def render_kpi_grid(kpis, definitions, per_row=4):
+    keys = list(definitions.keys())
+    for i in range(0, len(keys), per_row):
+        row_keys = keys[i:i + per_row]
+        cols = st.columns(len(row_keys))
+        for col, key in zip(cols, row_keys):
+            defn = definitions[key]
+            val = kpis.get(key)
+            with col:
+                if not val or val.get('insufficient'):
+                    st.metric(defn['name'], "—")
+                    needed = (val.get('needed') if val else None) or ['Additional data']
+                    st.caption(f"ℹ️ Need: {needed[0]}")
                 else:
-                    st.info("No moderate correlations found")
+                    st.metric(defn['name'], f"{val['value']:.2f} {val['unit']}", help=defn['description'])
+                    st.caption(f"Target: {val.get('target', 'N/A')}")
+                    st.markdown(status_chip(val.get('status', '')), unsafe_allow_html=True)
+
+
+# ============================================================
+# BASE KPI CALCULATOR (generic helpers - process pages subclass this)
+# ============================================================
+class BaseKPICalculator:
+    def __init__(self, df, detected_params, plant_info=None):
+        self.df = df
+        self.dp = detected_params
+        self.plant_info = plant_info or {}
+
+    def _col(self, key):
+        info = self.dp.get(key, {})
+        col = info.get('column')
+        if not col:
+            return None
+        data = pd.to_numeric(self.df[col], errors='coerce').dropna()
+        return data if len(data) > 0 else None
+
+    @staticmethod
+    def _status_range(value, lo, hi):
+        if lo <= value <= hi:
+            return '✅ On Target'
+        elif value < lo:
+            return '🔴 Below Target'
+        else:
+            return '🟠 Above Target'
+
+    @staticmethod
+    def _status_upper(value, hi):
+        return '✅ On Target' if value <= hi else '🟠 Above Target'
+
+    @staticmethod
+    def _status_lower(value, lo):
+        return '✅ On Target' if value >= lo else '🔴 Below Target'
+
+    @staticmethod
+    def _insufficient(needed):
+        return {'insufficient': True, 'needed': needed}
+
+    @staticmethod
+    def _clarity_kpi(value, unit, ntu_target, mgl_target):
+        """Only apply a numeric pass/fail rating if the unit is actually recognized as NTU/mg-L,
+        otherwise report the value honestly as informational so we never invent a benchmark."""
+        if unit == 'NTU':
+            status = BaseKPICalculator._status_upper(value, ntu_target)
+            target = f'<{ntu_target} NTU'
+            display_unit = 'NTU'
+        elif unit == 'mg/L':
+            status = BaseKPICalculator._status_upper(value, mgl_target)
+            target = f'<{mgl_target} mg/L'
+            display_unit = 'mg/L'
+        else:
+            status = 'ℹ️ Informational — unit not confirmed as NTU/mg/L, no benchmark applied'
+            target = 'Lower is generally better'
+            display_unit = unit if unit not in ('Unknown', None) else 'units'
+        return {'value': value, 'unit': display_unit, 'target': target, 'status': status}
+
+
+# ============================================================
+# RULE-BASED RECOMMENDATION ENGINE (generic - no AI/API calls, no key needed)
+# ============================================================
+class BaseRecommendationEngine:
+    """Generates technically-grounded recommendations purely from rule-based templates -
+    no external API calls. Each process page supplies its own KPI_DEFINITIONS (list of dicts
+    to merge), RECOMMENDATION_TEMPLATES, and PRIORITY_MAP."""
+
+    def __init__(self, kpi_definitions_list, recommendation_templates, priority_map, savings_estimator=None):
+        """kpi_definitions_list: list of {key: {'name':..., 'description':...}} dicts to merge
+        (e.g. [DEWATERING_KPI_DEFINITIONS, THICKENING_KPI_DEFINITIONS]).
+        savings_estimator(key, val) -> (savings_str, explanation_str), optional per-process override."""
+        self.definitions = {}
+        for d in kpi_definitions_list:
+            self.definitions.update(d)
+        self.templates = recommendation_templates
+        self.priority_map = priority_map
+        self.savings_estimator = savings_estimator or self._default_savings_estimator
+
+    @staticmethod
+    def _default_savings_estimator(key, val):
+        return ("Improves process efficiency", "Specific dollar savings require site-specific cost data not available from the uploaded dataset.")
+
+    def generate_recommendations(self, *kpi_dicts):
+        """Pass one or more computed KPI dicts (e.g. dew_kpis, thick_kpis)."""
+        combined = []
+        for kpis in kpi_dicts:
+            for k, v in kpis.items():
+                combined.append((k, v, self.definitions.get(k, {})))
+
+        recs = []
+        good_items = []
+
+        for key, val, defn in combined:
+            if val.get('insufficient'):
+                continue
+            status = val.get('status', '')
+            if 'On Target' in status or 'Informational' in status:
+                good_items.append((key, defn.get('name', key), val))
+                continue
+
+            template = self.templates.get(key, {})
+            priority = self.priority_map.get(key, '🟡 MEDIUM')
+            savings, savings_note = self.savings_estimator(key, val)
+
+            recs.append({
+                'priority': priority,
+                'category': defn.get('name', key.replace('_', ' ').title()),
+                'metric': defn.get('name', key),
+                'current_value': f"{val['value']:.2f} {val['unit']}",
+                'target_value': val.get('target', 'N/A'),
+                'issue': template.get('issue', f"{defn.get('name', key)} is outside the target range."),
+                'root_causes': template.get('root_causes', ['Process or equipment parameters may need adjustment', 'Feed characteristics may have changed']),
+                'actions': template.get('actions', ['Review recent operational data', 'Consult a process engineer for optimization']),
+                'potential_savings': savings,
+                'savings_explanation': savings_note,
+                'additional_data_needed': template.get('additional_data', ['Continue routine monitoring']),
+                'timeline': template.get('timeline', '2-4 weeks'),
+                'risk': template.get('risk', 'Low - monitor closely'),
+                'basis': val.get('basis', 'Calculation basis unavailable for this metric.'),
+            })
+
+        if not recs:
+            recs.append({
+                'priority': '✅ OPTIMAL', 'category': 'Overall Performance', 'metric': 'N/A',
+                'current_value': 'N/A', 'target_value': 'N/A',
+                'issue': 'All computable KPIs are at or near target - process is operating at optimal performance levels.',
+                'root_causes': [], 'actions': ['Continue current operations', 'Maintain preventive maintenance schedule'],
+                'potential_savings': 'Maintain current efficiency',
+                'savings_explanation': 'Process is performing well across all KPIs that could be computed from your data.',
+                'additional_data_needed': ['Continue routine monitoring'], 'timeline': 'Ongoing', 'risk': 'Low',
+                'basis': 'N/A - no metric was flagged.',
+            })
+
+        return recs, good_items
+
+
+def render_recommendations_tab(recommendations, good_items):
+    """Shared rendering for the AI Recommendations tab, given the output of
+    BaseRecommendationEngine.generate_recommendations()."""
+    for rec in recommendations:
+        with st.container():
+            col_h1, col_h2 = st.columns([3, 1])
+            with col_h1:
+                st.markdown(priority_chip(rec['priority']), unsafe_allow_html=True)
+                st.markdown(f"### {rec['category']}")
+            with col_h2:
+                st.write(f"**Risk:** {rec['risk']}")
+
+            st.markdown("---")
+
+            col_m1, col_m2 = st.columns([2, 1])
+            with col_m1:
+                st.write(f"**Metric:** {rec['metric']}")
+                st.write(f"**Current:** {rec['current_value']} | **Target:** {rec['target_value']}")
+                st.write(f"**Why this matters:** {rec['issue']}")
+
+                if rec['root_causes']:
+                    st.write("**Likely Root Causes:**")
+                    for cause in rec['root_causes']:
+                        st.write(f"• {cause}")
+
+                st.write("**Recommended Actions:**")
+                for j, action in enumerate(rec['actions'], 1):
+                    st.write(f"{j}. {action}")
+
+            with col_m2:
+                st.metric("Potential Savings", rec['potential_savings'])
+                st.metric("Timeline", rec['timeline'])
+
+            with st.expander("📊 Savings Explanation"):
+                st.write(rec['savings_explanation'])
+
+            with st.expander("🧮 How This Was Calculated", expanded=False):
+                st.write(f"**Indicators/columns used:** {rec['basis']}")
+
+            with st.expander("📋 Additional Data That Would Improve This Analysis"):
+                for item in rec['additional_data_needed']:
+                    st.write(f"• {item}")
 
             st.divider()
-            st.subheader("📈 Explore a Relationship")
-            st.write("Pick any two columns from your raw data to plot against each other (not limited to confirmed parameters).")
-            numeric_col_list = [c for c in df.columns if pd.to_numeric(df[c], errors='coerce').notna().sum() > 0]
-            default_x = strong_corrs[0]['Variable 1'] if strong_corrs else numeric_col_list[0]
-            default_y = strong_corrs[0]['Variable 2'] if strong_corrs else (numeric_col_list[1] if len(numeric_col_list) > 1 else numeric_col_list[0])
-            sc1, sc2 = st.columns(2)
-            with sc1:
-                x_var = st.selectbox("X-axis", numeric_col_list, index=numeric_col_list.index(default_x) if default_x in numeric_col_list else 0, key="dis_scatter_x_var")
-            with sc2:
-                y_default_idx = numeric_col_list.index(default_y) if default_y in numeric_col_list else (1 if len(numeric_col_list) > 1 else 0)
-                y_var = st.selectbox("Y-axis", numeric_col_list, index=y_default_idx, key="dis_scatter_y_var")
-            if x_var == y_var:
-                st.info("Pick two different parameters to see a scatter plot.")
-            else:
-                fig_scatter = correlation_analyzer.create_scatter_plot(x_var, y_var)
-                render_chart_with_download(fig_scatter, key="dis_interactive_scatter")
 
-    # ============================================================
-    # TAB 5: DISINFECTION PERFORMANCE
-    # ============================================================
-    with tab5:
-        st.header("🦠 Disinfection Performance")
-        st.write(f"**Method:** {plant_info.get('disinfection_method', 'Not specified')}")
-
-        if detected_params.get('chlorine_residual_precontact', {}).get('column'):
-            st.subheader("Chlorine Residual (Pre-Dechlorination)")
-            ccol = detected_params['chlorine_residual_precontact']['column']
-            cunit = detected_params['chlorine_residual_precontact']['unit']
-            st.caption(f"Column used: **{ccol}**")
-            fig = chart_renderer.render_line_with_ma(ccol, cunit, "Chlorine Residual (Pre-Dechlorination)", threshold_excellent=1.0, threshold_good=0.5)
-            render_chart_with_download(fig, key="dis_pre_residual_chart")
-            render_footnote('chlorine_residual_precontact', ' mg/L')
-
-        if detected_params.get('chlorine_residual_final', {}).get('column'):
-            st.subheader("Chlorine Residual (Final Effluent)")
-            ccol = detected_params['chlorine_residual_final']['column']
-            cunit = detected_params['chlorine_residual_final']['unit']
-            st.caption(f"Column used: **{ccol}**")
-            fig = chart_renderer.render_line_with_ma(ccol, cunit, "Chlorine Residual (Final Effluent)", threshold_excellent=0.05, threshold_good=0.1)
-            render_chart_with_download(fig, key="dis_final_residual_chart")
-            render_footnote('chlorine_residual_final', ' mg/L')
-
-        if detected_params.get('uv_dose', {}).get('column'):
-            st.subheader("UV Dose")
-            ucol = detected_params['uv_dose']['column']
-            uunit = detected_params['uv_dose']['unit']
-            st.caption(f"Column used: **{ucol}**")
-            fig = chart_renderer.render_line_with_ma(ucol, uunit, "UV Dose", threshold_excellent=40, threshold_good=30)
-            render_chart_with_download(fig, key="dis_uv_dose_chart")
-            render_footnote('uv_dose', ' mJ/cm²')
-
-        if detected_params.get('uv_transmittance', {}).get('column'):
-            st.subheader("UV Transmittance")
-            ucol = detected_params['uv_transmittance']['column']
-            uunit = detected_params['uv_transmittance']['unit']
-            st.caption(f"Column used: **{ucol}**")
-            fig = chart_renderer.render_line_with_ma(ucol, uunit, "UV Transmittance")
-            render_chart_with_download(fig, key="dis_uvt_chart")
-            st.caption("ℹ️ No fixed benchmark — typical secondary effluent runs 55-75% UVT.")
-
-        if detected_params.get('effluent_bacteria', {}).get('column'):
-            st.subheader("Effluent Bacteria")
-            bcol = detected_params['effluent_bacteria']['column']
-            bunit = detected_params['effluent_bacteria']['unit']
-            st.caption(f"Column used: **{bcol}**")
-            fig = chart_renderer.render_line_with_ma(bcol, bunit, "Effluent Bacteria")
-            render_chart_with_download(fig, key="dis_bacteria_chart")
-            st.caption("ℹ️ No fixed benchmark — compare against your specific discharge permit limit.")
-
-        if not any(detected_params.get(k, {}).get('column') for k in ['chlorine_residual_precontact', 'chlorine_residual_final', 'uv_dose', 'uv_transmittance', 'effluent_bacteria']):
-            st.info("No disinfection indicators are confirmed yet. Check **Confirm Data Mapping** above.")
-
-    # ============================================================
-    # TAB 6: DATA QUALITY
-    # ============================================================
-    with tab6:
-        st.header("🔍 Data Quality Analysis")
-        columns_to_check = [p['column'] for p in detected_params.values() if p['column']]
-
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Total Records", len(df))
-        with c2:
-            st.metric("Columns Confirmed", len(columns_to_check))
-        with c3:
-            total_missing = sum(df[col].isna().sum() for col in columns_to_check if col in df.columns)
-            st.metric("Total Missing Values", int(total_missing))
-
-        st.divider()
-
-        for col_name in columns_to_check:
-            if col_name in df.columns:
-                with st.expander(f"📊 {col_name}"):
-                    col_data = pd.to_numeric(df[col_name], errors='coerce')
-                    a, b, c = st.columns(3)
-                    with a:
-                        missing = df[col_name].isna().sum()
-                        st.write("**Missing Values:**")
-                        st.write(f"Count: {missing}")
-                        st.write(f"Percentage: {(missing / len(df) * 100):.2f}%")
-                    with b:
-                        st.write("**Data Range:**")
-                        if col_data.notna().any():
-                            st.write(f"Min: {col_data.min():.2f}")
-                            st.write(f"Max: {col_data.max():.2f}")
-                            st.write(f"Mean: {col_data.mean():.2f}")
-                        else:
-                            st.write("No numeric data")
-                    with c:
-                        st.write("**Outliers (IQR):**")
-                        clean = col_data.dropna()
-                        if len(clean) > 0:
-                            Q1, Q3 = clean.quantile(0.25), clean.quantile(0.75)
-                            IQR = Q3 - Q1
-                            outliers = clean[(clean < Q1 - 1.5 * IQR) | (clean > Q3 + 1.5 * IQR)]
-                            st.write(f"Count: {len(outliers)}")
-                            st.write(f"Percentage: {(len(outliers) / len(clean) * 100):.2f}%")
-                        else:
-                            st.write("No numeric data")
-
-    # ============================================================
-    # TAB 7: PARAMETERS
-    # ============================================================
-    with tab7:
-        st.header("📋 Confirmed Parameters & Units")
-        param_data = []
-        for param_name, param_info in detected_params.items():
-            param_data.append({
-                'Category': categorize_param(param_name),
-                'Parameter': param_name,
-                'Column': param_info['column'] if param_info['column'] else '— not detected —',
-                'Unit': param_info['unit'],
-                'Match Score': f"{param_info['score']:.0f}%",
-            })
-        param_df = pd.DataFrame(param_data).sort_values(['Category', 'Parameter'])
-        st.dataframe(param_df, use_container_width=True)
-        csv = param_df.to_csv(index=False)
-        st.download_button("📥 Download Parameters", data=csv, file_name="disinfection_parameters.csv", mime="text/csv")
-
-    # ============================================================
-    # TAB 8: RAW DATA
-    # ============================================================
-    with tab8:
-        st.header("📥 Raw Data")
-        st.dataframe(df, use_container_width=True)
-        csv = df.to_csv(index=False)
-        st.download_button("📥 Download Data", data=csv, file_name="disinfection_data.csv", mime="text/csv")
-
-st.success("✅ Module loaded successfully!")
-
+    if good_items:
+        with st.expander(f"✅ Performing Well ({len(good_items)} metric(s) at or near target)"):
+            for key, name, val in good_items:
+                st.markdown(f"**{name}:** {val['value']:.2f} {val['unit']} &nbsp; {status_chip(val.get('status', ''))}", unsafe_allow_html=True)
+                if val.get('basis'):
+                    st.caption(val['basis'])
