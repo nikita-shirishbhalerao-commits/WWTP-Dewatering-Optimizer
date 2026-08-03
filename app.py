@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 from fuzzywuzzy import fuzz
 import warnings
 import os
+from datetime import date
 warnings.filterwarnings('ignore')
 
 try:
@@ -1868,13 +1869,59 @@ else:
     # TAB 1: DASHBOARD
     # ============================================================
     with tab1:
-        st.header(f"📊 Performance Dashboard - {plant_info.get('name', 'WWTP')}")
-        if plant_info.get('location'):
-            st.caption(f"📍 {plant_info['location']} | Capacity: {plant_info.get('capacity', 'N/A')} MGD")
-        st.caption("KPIs below are computed from the columns you confirmed above in **Confirm Data Mapping**.")
+        header_col, year_col = st.columns([3, 1])
+        with header_col:
+            st.header(f"📊 Performance Dashboard - {plant_info.get('name', 'WWTP')}")
+            if plant_info.get('location'):
+                st.caption(f"📍 {plant_info['location']} | Capacity: {plant_info.get('capacity', 'N/A')} MGD")
 
-        dew_kpis = kpi_calculator.calculate_dewatering_kpis()
-        thick_kpis = kpi_calculator.calculate_thickening_kpis()
+        available_years = sorted(df[date_col].dt.year.dropna().unique().astype(int).tolist())
+        today = date.today()
+        current_year = today.year
+        year_options = ["All"] + [str(y) for y in available_years]
+
+        if current_year in available_years:
+            default_year_str = str(current_year)
+        elif available_years:
+            default_year_str = str(max(available_years))
+        else:
+            default_year_str = "All"
+        default_index = year_options.index(default_year_str) if default_year_str in year_options else 0
+
+        with year_col:
+            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+            selected_year_str = st.selectbox("Year", year_options, index=default_index, key="dashboard_year_filter")
+
+        # Build the filtered dataframe the Dashboard's KPIs are computed from:
+        # - "All" -> the full uploaded dataset
+        # - the current calendar year -> Jan 1 through today (year-to-date)
+        # - any other year -> that full calendar year
+        if selected_year_str == "All":
+            dashboard_df = df
+            period_caption = f"All data ({df[date_col].min().date()} to {df[date_col].max().date()})"
+        else:
+            yr = int(selected_year_str)
+            if yr == current_year:
+                mask = (df[date_col].dt.year == yr) & (df[date_col].dt.date <= today)
+                dashboard_df = df[mask]
+                period_caption = f"Year to date: Jan 1, {yr} – {today.strftime('%b %d, %Y')}"
+            else:
+                mask = df[date_col].dt.year == yr
+                dashboard_df = df[mask]
+                period_caption = f"Full year {yr}"
+
+        if len(dashboard_df) == 0:
+            st.warning(f"No records fall in the selected period ({period_caption}). Showing full dataset instead.")
+            dashboard_df = df
+            period_caption = f"All data ({df[date_col].min().date()} to {df[date_col].max().date()})"
+
+        st.caption(f"📅 {period_caption} &nbsp;·&nbsp; {len(dashboard_df)} record(s) &nbsp;·&nbsp; "
+                   f"KPIs below are computed from the columns you confirmed above in **Confirm Data Mapping**, "
+                   f"averaged over this period.", unsafe_allow_html=False)
+
+        dashboard_kpi_calculator = KPICalculator(dashboard_df, detected_params, plant_info)
+        dew_kpis = dashboard_kpi_calculator.calculate_dewatering_kpis()
+        thick_kpis = dashboard_kpi_calculator.calculate_thickening_kpis()
 
         st.subheader("🔄 Dewatering KPIs")
         render_kpi_grid(dew_kpis, DEWATERING_KPI_DEFINITIONS)
@@ -1891,14 +1938,14 @@ else:
         if detected_params.get('influent_flow', {}).get('column'):
             inf_col = detected_params['influent_flow']['column']
             inf_unit = detected_params['influent_flow']['unit']
-            inf_data = pd.to_numeric(df[inf_col], errors='coerce').dropna()
+            inf_data = pd.to_numeric(dashboard_df[inf_col], errors='coerce').dropna()
             if len(inf_data) > 0:
                 with flow_col1:
                     st.metric(f"Influent Flow ({inf_unit})", f"{inf_data.mean():.2f}")
         if detected_params.get('effluent_flow', {}).get('column'):
             eff_col = detected_params['effluent_flow']['column']
             eff_unit = detected_params['effluent_flow']['unit']
-            eff_data = pd.to_numeric(df[eff_col], errors='coerce').dropna()
+            eff_data = pd.to_numeric(dashboard_df[eff_col], errors='coerce').dropna()
             if len(eff_data) > 0:
                 with flow_col2:
                     st.metric(f"Effluent Flow ({eff_unit})", f"{eff_data.mean():.2f}")
