@@ -12,7 +12,7 @@ from common import (
     format_threshold_footnote as _format_threshold_footnote,
     PLOTLY_CONFIG, render_chart_with_download,
     load_process_csv, detect_parameters as _detect_parameters,
-    render_mapping_editor as _render_mapping_editor,
+    render_mapping_editor as _render_mapping_editor, render_date_column_selector,
     CorrelationAnalyzer, ChartRenderer, render_kpi_grid,
     BaseKPICalculator, BaseRecommendationEngine, render_recommendations_tab,
 )
@@ -480,12 +480,16 @@ if uploaded_file is None:
     """)
 else:
     try:
-        df, date_col = load_process_csv(uploaded_file)
+        df, date_col, used_synthetic_dates = load_process_csv(uploaded_file)
         st.sidebar.success(f"✅ Loaded {len(df)} records")
-        st.sidebar.write(f"📅 {df[date_col].min().date()} to {df[date_col].max().date()}")
     except Exception as e:
         st.error(f"Error loading file: {e}")
         st.stop()
+
+    st.subheader("📅 Confirm Date Column")
+    df, date_col = render_date_column_selector(df, date_col, used_synthetic_dates, key_prefix="cg")
+    st.sidebar.write(f"📅 {df[date_col].min().date()} to {df[date_col].max().date()}")
+    st.divider()
 
     with st.sidebar.expander("🏭 Plant Information", expanded=False):
         plant_name = st.text_input("Plant Name", value="WWTP", key="cg_plant_name")
@@ -500,7 +504,7 @@ else:
     # ------------------------------------------------------
     # PARAMETER DETECTION + CONFIRM/EDIT MAPPING
     # ------------------------------------------------------
-    auto_detected_params = _detect_parameters(df, PARAMETER_KEYWORDS, EXPECTED_UNIT_FAMILIES, REQUIRED_TOKEN_GROUPS, EXCLUDE_TOKENS, threshold=55)
+    auto_detected_params = _detect_parameters(df, PARAMETER_KEYWORDS, EXPECTED_UNIT_FAMILIES, REQUIRED_TOKEN_GROUPS, EXCLUDE_TOKENS, threshold=55, exclude_columns=[date_col])
 
     st.header("🔧 Confirm Data Mapping")
     st.write(
@@ -1003,4 +1007,3 @@ else:
         st.download_button("📥 Download Data", data=csv, file_name="coagulant_data.csv", mime="text/csv")
 
 st.success("✅ Module loaded successfully!")
-
