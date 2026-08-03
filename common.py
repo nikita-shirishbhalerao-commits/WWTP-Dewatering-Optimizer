@@ -468,6 +468,14 @@ class FuzzyParameterDetector:
             return 'kWh'
         if 'temp' in col_lower or 'temperature' in col_lower:
             return 'Temp'
+        # "lbs/MG" or "gal/MG" (dose per million gallons treated) vs "mg/L" (milligrams per liter,
+        # a concentration) look confusingly similar once lowercased ("mg" vs "MG" collide) - the
+        # reliable signal is which side of the slash "mg" falls on: numerator = milligrams (mg/L),
+        # denominator with lbs/gal before it = million gallons (lbs/MG, gal/MG).
+        if any(p in col_lower for p in ['lbs/mg', 'lb/mg', 'lbs per mg']):
+            return 'lbs/MG'
+        if any(p in col_lower for p in ['gal/mg', 'gallons/mg', 'gal per mg']):
+            return 'gal/MG'
         ratio_markers = ['lbs/ton', 'lb/ton', 'lbs per ton', 'lb per ton', '/ton', '/dt', 'per ton', 'per dt']
         if any(m in col_lower for m in ratio_markers):
             return 'lbs/ton'
@@ -518,29 +526,80 @@ class FuzzyParameterDetector:
 # CSV LOADING (generic)
 # ============================================================
 def load_process_csv(uploaded_file):
-    """Read a CSV, detect/parse a date column (or synthesize one), return (df, date_col)."""
+    """Read a CSV, detect/parse a date column (or synthesize one).
+    Returns (df, date_col, used_synthetic_dates) - always check the third value and surface it
+    to the user (see render_date_column_selector) rather than silently trusting the date range,
+    since a failed date-parse produces a fake sequential calendar that looks plausible at a glance
+    but will scramble any year-based filtering or trend analysis downstream."""
     df = pd.read_csv(uploaded_file)
     df = df.reset_index(drop=True)
     date_col = None
+    best_frac = 0
+    best_converted = None
     for col in df.columns:
         if any(x in col.lower() for x in ['date', 'time', 'day', 'month', 'year']):
             try:
                 converted = pd.to_datetime(df[col], errors='coerce')
-                if converted.notna().sum() > len(df) * 0.5:
-                    df[col] = converted
-                    date_col = col
-                    df = df.sort_values(col).reset_index(drop=True)
-                    break
             except Exception:
-                pass
-    if not date_col:
+                continue
+            valid_frac = converted.notna().sum() / max(len(df), 1)
+            if valid_frac > 0.5 and valid_frac > best_frac:
+                best_frac = valid_frac
+                date_col = col
+                best_converted = converted
+    if date_col:
+        df[date_col] = best_converted
+        df = df.sort_values(date_col).reset_index(drop=True)
+        return df, date_col, False
+    else:
         df['Date'] = pd.date_range(start='2023-01-01', periods=len(df), freq='D')
-        date_col = 'Date'
+        return df, 'Date', True
+
+
+def render_date_column_selector(df, date_col, used_synthetic, key_prefix):
+    """Shows the detected date column/range plainly, warns loudly if synthetic dates were used,
+    and always lets the user manually pick the real date column instead - auto-detection can't
+    cover every naming convention (e.g. 'Month Year' style columns, non-English headers, etc).
+    Returns the (possibly corrected) df and date_col."""
+    if used_synthetic:
+        st.warning(
+            "⚠️ **No date column could be confidently auto-detected** — using a placeholder sequential "
+            "daily calendar starting 2023-01-01. Year filtering and trend analysis will be meaningless "
+            "until you pick your real date column below."
+        )
+    else:
+        st.caption(f"📅 Date column detected: **{date_col}** ({df[date_col].min().date()} to {df[date_col].max().date()})")
+
+    all_cols = list(df.columns)
+    options = ["Keep as detected"] + [c for c in all_cols if c != date_col]
+    choice = st.selectbox(
+        "Not right? Pick your actual date column",
+        options, index=0, key=f"{key_prefix}_date_col_override",
+        help="Select the column that actually contains your date/period (e.g. 'Month Year', 'Date', 'Period')."
+    )
+    if choice != "Keep as detected":
+        converted = pd.to_datetime(df[choice], errors='coerce')
+        valid_frac = converted.notna().sum() / max(len(df), 1)
+        if valid_frac < 0.5:
+            st.error(f"'{choice}' couldn't be parsed as dates for most rows ({valid_frac:.0%} valid) - keeping the previous date column.")
+            return df, date_col
+        new_df = df.copy()
+        if used_synthetic and date_col in new_df.columns:
+            new_df = new_df.drop(columns=[date_col])
+        new_df[choice] = converted
+        new_df = new_df.sort_values(choice).reset_index(drop=True)
+        st.success(f"✅ Using **{choice}** as the date column ({new_df[choice].min().date()} to {new_df[choice].max().date()}, {new_df[choice].notna().sum()}/{len(new_df)} rows parsed).")
+        return new_df, choice
     return df, date_col
 
 
-def detect_parameters(df, keyword_dict, expected_units, required_token_groups, exclude_tokens, threshold=55):
-    detector = FuzzyParameterDetector(df.columns)
+def detect_parameters(df, keyword_dict, expected_units, required_token_groups, exclude_tokens, threshold=55, exclude_columns=None):
+    """exclude_columns should always include your date column - otherwise the date column can get
+    fuzzy-matched as an unrelated parameter (e.g. 'Contact Time'), and any numeric calculation on it
+    produces a nonsense astronomical number (a date's nanoseconds-since-1970 representation)."""
+    exclude_columns = set(exclude_columns or [])
+    candidate_cols = [c for c in df.columns if c not in exclude_columns]
+    detector = FuzzyParameterDetector(candidate_cols)
     return detector.find_parameters(keyword_dict, threshold=threshold, expected_units=expected_units,
                                      required_token_groups=required_token_groups, exclude_tokens=exclude_tokens)
 
