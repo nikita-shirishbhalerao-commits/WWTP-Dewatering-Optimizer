@@ -815,7 +815,7 @@ class ChartRenderer:
 
     def render_line_with_ma(self, column, unit, title, threshold_excellent=None, threshold_good=None):
         col_data = pd.to_numeric(self.df[column], errors='coerce')
-        col_ma = col_data.rolling(window=self.ma_window).mean()
+        col_ma = col_data.rolling(window=self.ma_window, min_periods=max(1, self.ma_window // 2)).mean()
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=self.df.index, y=col_data, mode='markers', name='Per record', marker=dict(size=4, color=VEOLIA['sky_blue'], opacity=0.7)))
         fig.add_trace(go.Scatter(x=self.df.index, y=col_ma, mode='lines', name=self.ma_label, line=dict(color=VEOLIA['marine'], width=2)))
@@ -827,7 +827,7 @@ class ChartRenderer:
 
     def render_bar_with_ma(self, column, unit, title):
         col_data = pd.to_numeric(self.df[column], errors='coerce')
-        col_ma = col_data.rolling(window=self.ma_window).mean()
+        col_ma = col_data.rolling(window=self.ma_window, min_periods=max(1, self.ma_window // 2)).mean()
         fig = go.Figure()
         fig.add_trace(go.Bar(x=self.df.index, y=col_data, name='Per record', marker=dict(color=VEOLIA['turquoise'], opacity=0.75)))
         fig.add_trace(go.Scatter(x=self.df.index, y=col_ma, mode='lines', name=self.ma_label, line=dict(color=VEOLIA['marine'], width=2)))
@@ -837,7 +837,7 @@ class ChartRenderer:
         col1_data = pd.to_numeric(self.df[column1], errors='coerce')
         col2_data = pd.to_numeric(self.df[column2], errors='coerce')
         ratio_data = (col1_data / col2_data).replace([np.inf, -np.inf], np.nan)
-        ratio_ma = ratio_data.rolling(window=self.ma_window).mean()
+        ratio_ma = ratio_data.rolling(window=self.ma_window, min_periods=max(1, self.ma_window // 2)).mean()
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=self.df.index, y=ratio_data, mode='markers', name='Per record', marker=dict(size=4, color=VEOLIA['sky_blue'], opacity=0.7)))
         fig.add_trace(go.Scatter(x=self.df.index, y=ratio_ma, mode='lines', name=self.ma_label, line=dict(color=VEOLIA['marine'], width=2)))
