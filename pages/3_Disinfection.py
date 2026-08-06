@@ -334,9 +334,12 @@ class KPICalculator(BaseKPICalculator):
         hrs_col = self.dp.get('disinfection_run_hours', {}).get('column')
         hrs = self._col('disinfection_run_hours')
         if hrs is not None:
-            v = (hrs / 24 * 100).clip(upper=100).mean()
+            period_days = self.plant_info.get('period_days', 1.0)
+            hours_available = 24 * period_days
+            v = (hrs / hours_available * 100).clip(upper=100).mean()
             k['disinfection_equipment_availability'] = {'value': v, 'unit': '%', 'target': '>98%', 'status': self._status_lower(v, 95),
-                                                          'basis': f"Average of (**{hrs_col}** ÷ 24 × 100)."}
+                                                          'basis': f"Average of (**{hrs_col}** ÷ {hours_available:.0f} possible hours per record [24 × "
+                                                                    f"{period_days:.0f}-day reporting period] × 100)."}
         else:
             k['disinfection_equipment_availability'] = self._insufficient(['Disinfection equipment run-hours column'])
 
@@ -411,8 +414,9 @@ else:
         st.stop()
 
     st.subheader("📅 Confirm Date Column")
-    df, date_col = render_date_column_selector(df, date_col, used_synthetic_dates, key_prefix="dis")
+    df, date_col, period_days, period_label, ma_window = render_date_column_selector(df, date_col, used_synthetic_dates, key_prefix="dis")
     st.sidebar.write(f"📅 {df[date_col].min().date()} to {df[date_col].max().date()}")
+    st.sidebar.caption(f"Reporting frequency: {period_label}")
     st.divider()
 
     with st.sidebar.expander("🏭 Plant Information", expanded=False):
@@ -422,7 +426,8 @@ else:
         plant_capacity = st.number_input("Plant Capacity (MGD)", value=10.0, min_value=0.1, key="dis_capacity")
 
         plant_info = {
-            'name': plant_name, 'location': plant_location, 'disinfection_method': disinfection_method, 'capacity': plant_capacity,
+            'name': plant_name, 'location': plant_location, 'disinfection_method': disinfection_method,
+            'capacity': plant_capacity, 'period_days': period_days, 'period_label': period_label,
         }
 
     # ------------------------------------------------------
@@ -453,7 +458,7 @@ else:
     )
     kpi_calculator = KPICalculator(df, detected_params, plant_info)
     correlation_analyzer = CorrelationAnalyzer(df, detected_params)
-    chart_renderer = ChartRenderer(df)
+    chart_renderer = ChartRenderer(df, ma_window=ma_window, ma_label=f"{ma_window}-period Avg ({period_label})")
 
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "📊 Dashboard", "💡 AI Recommendations", "📈 Trend / Benchmark", "🔗 Correlation Analysis",
