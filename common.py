@@ -526,16 +526,14 @@ class FuzzyParameterDetector:
 # CSV LOADING (generic)
 # ============================================================
 def load_process_csv(uploaded_file):
-    """Read a CSV, detect/parse a date column (or synthesize one).
-    Returns (df, date_col, used_synthetic_dates) - always check the third value and surface it
-    to the user (see render_date_column_selector) rather than silently trusting the date range,
-    since a failed date-parse produces a fake sequential calendar that looks plausible at a glance
-    but will scramble any year-based filtering or trend analysis downstream."""
+    """Read a CSV and identify the best-guess date column (or flag that none was found) WITHOUT
+    converting/overwriting it yet - the raw text is preserved so render_date_column_selector can
+    show you a 'raw value -> parsed as' preview before anything downstream trusts it.
+    Returns (df, date_col, used_synthetic_dates)."""
     df = pd.read_csv(uploaded_file)
     df = df.reset_index(drop=True)
     date_col = None
     best_frac = 0
-    best_converted = None
     for col in df.columns:
         if any(x in col.lower() for x in ['date', 'time', 'day', 'month', 'year']):
             try:
@@ -546,10 +544,7 @@ def load_process_csv(uploaded_file):
             if valid_frac > 0.5 and valid_frac > best_frac:
                 best_frac = valid_frac
                 date_col = col
-                best_converted = converted
     if date_col:
-        df[date_col] = best_converted
-        df = df.sort_values(date_col).reset_index(drop=True)
         return df, date_col, False
     else:
         df['Date'] = pd.date_range(start='2023-01-01', periods=len(df), freq='D')
@@ -585,65 +580,71 @@ def describe_period(period_days):
 
 
 def render_date_column_selector(df, date_col, used_synthetic, key_prefix):
-    """Shows the detected date column/range plainly, warns loudly if synthetic dates were used,
-    and always lets the user manually pick the real date column instead - auto-detection can't
-    cover every naming convention (e.g. 'Month Year' style columns, non-English headers, etc).
-    Returns (df, date_col, period_days, period_label, ma_window) - period_days/label tell you
-    whether the data is daily/weekly/monthly, which matters for any KPI built from period totals
-    (e.g. equipment run-hours) rather than instantaneous rates (e.g. flow in GPM, doses in mg/L)."""
+    """Lets you verify - not just trust - the date column before anything downstream uses it:
+    pick the column, pick how to interpret ambiguous numeric dates (Month/Day/Year vs Day/Month/Year -
+    genuinely unresolvable from data alone when the day is always '1', e.g. '2/1/2023'), and see a
+    live raw-value -> parsed-date preview before committing.
+    Returns (df, date_col, period_days, period_label, ma_window)."""
     if used_synthetic:
         st.warning(
             "⚠️ **No date column could be confidently auto-detected** — using a placeholder sequential "
             "daily calendar starting 2023-01-01. Year filtering and trend analysis will be meaningless "
             "until you pick your real date column below."
         )
+        default_index = 0
+        options = list(df.columns)
     else:
-        st.caption(f"📅 Date column detected: **{date_col}** ({df[date_col].min().date()} to {df[date_col].max().date()})")
+        st.caption(f"📅 Auto-detected date column: **{date_col}**")
+        options = list(df.columns)
+        default_index = options.index(date_col) if date_col in options else 0
 
-    all_cols = list(df.columns)
-    options = ["Keep as detected"] + [c for c in all_cols if c != date_col]
-    choice = st.selectbox(
-        "Not right? Pick your actual date column",
-        options, index=0, key=f"{key_prefix}_date_col_override",
-        help="Select the column that actually contains your date/period (e.g. 'Month Year', 'Date', 'Period')."
-    )
-    if choice != "Keep as detected":
-        converted = pd.to_datetime(df[choice], errors='coerce')
-        n_before = len(df)
-        n_valid = converted.notna().sum()
-        if n_valid == 0:
-            st.error(f"'{choice}' has no parseable dates at all in any row - keeping the previous date column. "
-                     f"Check that it actually contains dates (e.g. 'Jan 2023', '2023-01-15') and isn't blank/text.")
-            period_days = infer_period_days(df, date_col)
-            period_label, ma_window = describe_period(period_days)
-            st.caption(f"📊 Detected reporting frequency: **{period_label}** (~{period_days:.0f} days between records)")
-            return df, date_col, period_days, period_label, ma_window
+    col_c1, col_c2 = st.columns([2, 1])
+    with col_c1:
+        choice = st.selectbox(
+            "Date column", options, index=default_index, key=f"{key_prefix}_date_col_override",
+            help="Pick whichever column actually contains your date/period."
+        )
+    with col_c2:
+        date_format = st.selectbox(
+            "Ambiguous dates like 2/1/2023 mean:", ["Month/Day/Year (US)", "Day/Month/Year (international)"],
+            key=f"{key_prefix}_date_format",
+            help="Only matters for ambiguous numeric dates. Check the preview below to confirm this is set correctly."
+        )
+    dayfirst = date_format.startswith("Day")
+    working_col = choice
 
-        new_df = df.copy()
-        if used_synthetic and date_col in new_df.columns:
-            new_df = new_df.drop(columns=[date_col])
-        new_df[choice] = converted
-        n_dropped = n_before - n_valid
-        # Trust the user's column choice - just drop rows that didn't parse (typically blank/malformed
-        # rows, e.g. trailing empty rows from a spreadsheet export) rather than rejecting the whole column.
-        new_df = new_df.dropna(subset=[choice]).sort_values(choice).reset_index(drop=True)
-        if n_dropped > 0:
-            st.warning(f"⚠️ {n_dropped} of {n_before} rows had a blank or unparseable **{choice}** value and were "
-                       f"excluded (they can't be placed on a timeline). **{n_valid} rows remain** for analysis.")
-        st.success(f"✅ Using **{choice}** as the date column ({new_df[choice].min().date()} to {new_df[choice].max().date()}, {n_valid} rows).")
-        period_days = infer_period_days(new_df, choice)
-        period_label, ma_window = describe_period(period_days)
-        st.caption(f"📊 Detected reporting frequency: **{period_label}** (~{period_days:.0f} days between records) — "
-                   f"used to correctly scale any KPI built from period totals (like equipment run-hours), rather "
-                   f"than assuming every row is one day.")
-        return new_df, choice, period_days, period_label, ma_window
+    raw_series = df[working_col]
+    converted = pd.to_datetime(raw_series, errors='coerce', dayfirst=dayfirst)
+    n_before = len(df)
+    n_valid = converted.notna().sum()
 
-    period_days = infer_period_days(df, date_col)
+    preview_n = min(5, len(df))
+    if preview_n > 0:
+        preview_df = pd.DataFrame({
+            'Raw value': raw_series.head(preview_n).astype(str).tolist(),
+            'Parsed as': [d.strftime('%b %d, %Y') if pd.notna(d) else '— could not parse —' for d in converted.head(preview_n)],
+        })
+        st.caption("👀 Verify this looks right before proceeding:")
+        st.dataframe(preview_df, use_container_width=True, hide_index=True)
+
+    if n_valid == 0:
+        st.error(f"'{working_col}' has no parseable dates in any row with this format setting. Try the other "
+                 f"Month/Day vs Day/Month option above, or pick a different column.")
+        return df, working_col, 1.0, "Irregular/Other", 2
+
+    new_df = df.copy()
+    new_df[working_col] = converted
+    n_dropped = n_before - n_valid
+    new_df = new_df.dropna(subset=[working_col]).sort_values(working_col).reset_index(drop=True)
+    if n_dropped > 0:
+        st.warning(f"⚠️ {n_dropped} of {n_before} rows had a blank or unparseable **{working_col}** value and were "
+                   f"excluded (they can't be placed on a timeline). **{n_valid} rows remain** for analysis.")
+
+    period_days = infer_period_days(new_df, working_col)
     period_label, ma_window = describe_period(period_days)
-    st.caption(f"📊 Detected reporting frequency: **{period_label}** (~{period_days:.0f} days between records) — "
-               f"used to correctly scale any KPI built from period totals (like equipment run-hours), rather "
-               f"than assuming every row is one day.")
-    return df, date_col, period_days, period_label, ma_window
+    st.success(f"✅ Using **{working_col}** ({new_df[working_col].min().date()} to {new_df[working_col].max().date()}, "
+               f"{n_valid} rows) — detected reporting frequency: **{period_label}** (~{period_days:.0f} days between records).")
+    return new_df, working_col, period_days, period_label, ma_window
 
 
 def detect_parameters(df, keyword_dict, expected_units, required_token_groups, exclude_tokens, threshold=55, exclude_columns=None):
